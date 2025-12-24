@@ -1,0 +1,102 @@
+# Reusable workflow for scanning node_modules in other repositories
+# 
+# Usage in your repository:
+# 
+# name: Supply Chain Scan
+# on: [push, pull_request]
+# jobs:
+#   scan:
+#     uses: hukasx0/chain-audit/.github/workflows/scan.yml@main
+#     with:
+#       fail-on: high
+
+name: Supply Chain Scan
+
+on:
+  workflow_call:
+    inputs:
+      node-modules-path:
+        description: 'Path to node_modules directory'
+        required: false
+        default: './node_modules'
+        type: string
+      fail-on:
+        description: 'Fail on severity level (info|low|medium|high|critical)'
+        required: false
+        default: 'high'
+        type: string
+      scan-code:
+        description: 'Enable deep code scanning (slower)'
+        required: false
+        default: false
+        type: boolean
+      upload-sarif:
+        description: 'Upload SARIF to GitHub Code Scanning'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  scan:
+    name: Scan Dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install dependencies (no scripts)
+        run: npm ci --ignore-scripts
+      
+      - name: Install chain-audit
+        run: npm install -g chain-audit
+      
+      - name: Run chain-audit
+        id: scan
+        run: |
+          ARGS="--node-modules ${{ inputs.node-modules-path }}"
+          ARGS="$ARGS --fail-on ${{ inputs.fail-on }}"
+          if [ "${{ inputs.scan-code }}" = "true" ]; then
+            ARGS="$ARGS --scan-code"
+          fi
+          
+          # Run with JSON output for processing
+          chain-audit $ARGS --json > chain-audit-results.json || true
+          
+          # Show human-readable output
+          chain-audit $ARGS || echo "scan_failed=true" >> $GITHUB_OUTPUT
+      
+      - name: Generate SARIF report
+        if: inputs.upload-sarif
+        run: |
+          chain-audit --node-modules ${{ inputs.node-modules-path }} --sarif > chain-audit.sarif || true
+      
+      - name: Upload SARIF to GitHub
+        if: inputs.upload-sarif
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: chain-audit.sarif
+          category: chain-audit
+      
+      - name: Upload results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chain-audit-results
+          path: |
+            chain-audit-results.json
+            chain-audit.sarif
+          if-no-files-found: ignore
+      
+      - name: Check scan result
+        if: steps.scan.outputs.scan_failed == 'true'
+        run: |
+          echo "::error::Supply chain scan found issues at or above '${{ inputs.fail-on }}' severity"
+          exit 1

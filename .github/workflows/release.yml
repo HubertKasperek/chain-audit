@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  # Publish to npm registry
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Build standalone executables for all platforms
+  # Runs in parallel with npm publish (no dependency)
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+            bun-target: bun-linux-x64
+            artifact: chain-audit-linux-x64
+          - target: linux-arm64
+            bun-target: bun-linux-arm64
+            artifact: chain-audit-linux-arm64
+          - target: darwin-x64
+            bun-target: bun-darwin-x64
+            artifact: chain-audit-darwin-x64
+          - target: darwin-arm64
+            bun-target: bun-darwin-arm64
+            artifact: chain-audit-darwin-arm64
+          - target: windows-x64
+            bun-target: bun-windows-x64
+            artifact: chain-audit-windows-x64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build standalone executable
+        run: |
+          bun build src/index.js --compile --target=${{ matrix.bun-target }} --outfile ${{ matrix.artifact }}
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}

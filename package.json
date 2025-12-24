@@ -1,0 +1,62 @@
+{
+  "name": "chain-audit",
+  "version": "0.5.0",
+  "description": "Fast, zero-dependency CLI to detect supply chain attacks in node_modules. Scans for malicious install scripts, typosquatting, extraneous packages, and suspicious code patterns.",
+  "main": "src/index.js",
+  "bin": {
+    "chain-audit": "src/index.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./analyzer": "./src/analyzer.js",
+    "./collector": "./src/collector.js",
+    "./lockfile": "./src/lockfile.js"
+  },
+  "files": [
+    "src/**/*.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "scan": "node src/index.js",
+    "scan:json": "node src/index.js --json",
+    "scan:sarif": "node src/index.js --sarif",
+    "scan:deep": "node src/index.js --scan-code",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm run lint"
+  },
+  "keywords": [
+    "security",
+    "supply-chain",
+    "supply-chain-attack",
+    "node-modules",
+    "audit",
+    "malware",
+    "dependency",
+    "npm-audit",
+    "postinstall",
+    "typosquatting",
+    "ci",
+    "github-actions",
+    "sarif"
+  ],
+  "author": "Hubert Kasperek",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hukasx0/chain-audit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hukasx0/chain-audit/issues"
+  },
+  "homepage": "https://github.com/hukasx0/chain-audit#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}
