@@ -197,7 +197,8 @@ ${color('OPTIONS:', colors.bold)}
   -n, --node-modules <path>  Path to node_modules (default: ./node_modules)
   -l, --lock <path>          Path to lockfile (auto-detects package-lock.json,
                              npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml, bun.lock)
-  -c, --config <path>        Path to config file (.chainauditrc.json)
+  -c, --config <path>        Path to config file (auto-detects .chainauditrc.json,
+                             .chainauditrc, chainaudit.config.json)
   --json                     Output as JSON
   --sarif                    Output as SARIF (for GitHub Code Scanning)
   -s, --severity <levels>    Show only specified severity levels (comma-separated)
@@ -249,10 +250,12 @@ ${color('EXAMPLES:', colors.bold)}
   chain-audit --verbose --json --scan-code
 
 ${color('CONFIGURATION:', colors.bold)}
-  Create .chainauditrc.json in your project root:
+  Create a config file in your project root:
+  (.chainauditrc.json, .chainauditrc, or chainaudit.config.json)
   {
     "ignoredPackages": ["@types/*"],
     "ignoredRules": ["native_binary"],
+    "trustedPackages": ["my-native-addon"],
     "scanCode": false,
     "failOn": "high"
   }

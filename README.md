@@ -120,7 +120,7 @@ chain-audit --verbose --json --scan-code
 |--------|-------------|
 | `-n, --node-modules <path>` | Path to node_modules (default: `./node_modules`) |
 | `-l, --lock <path>` | Path to lockfile (auto-detects npm, yarn, pnpm, bun) |
-| `-c, --config <path>` | Path to config file |
+| `-c, --config <path>` | Path to config file (auto-detects if not specified) |
 | `--json` | Output as JSON |
 | `--sarif` | Output as SARIF (for GitHub Code Scanning) |
 | `-s, --severity <levels>` | Show only specified severity levels (comma-separated, e.g., `critical,high`) |
@@ -237,10 +237,11 @@ The trust score (0-100) is calculated based on multiple factors:
 **Example:**
 ```
 Trust Assessment:
-  trust score: 50/100 (medium)
-  ✓ Has repository
+  trust score: 40/100 (medium)
   ✓ Has homepage
+  ✓ Has author
   ✓ Has license
+  ✗ Not from trusted scope
   ✗ No repository
 ```
 
@@ -254,7 +255,10 @@ Trust Assessment:
 
 ## Configuration
 
-Create `.chainauditrc.json` in your project root:
+Create a config file in your project root. Supported filenames (in priority order):
+- `.chainauditrc.json`
+- `.chainauditrc`
+- `chainaudit.config.json`
 
 ```json
 {
@@ -270,20 +274,37 @@ Create `.chainauditrc.json` in your project root:
     "@swc/*",
     "sharp"
   ],
+  "trustedPatterns": {
+    "node-gyp rebuild": true,
+    "prebuild-install": true
+  },
   "scanCode": false,
-  "failOn": "high"
+  "failOn": "high",
+  "severity": ["critical", "high"],
+  "format": "text",
+  "verbose": false,
+  "quiet": false,
+  "maxFileSizeForCodeScan": 1048576,
+  "maxNestedDepth": 10
 }
 ```
 
 ### Configuration Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `ignoredPackages` | `string[]` | Packages to skip (supports `*` wildcards) |
-| `ignoredRules` | `string[]` | Rule IDs to ignore |
-| `trustedPackages` | `string[]` | Packages with reduced severity for install scripts |
-| `scanCode` | `boolean` | Enable deep code scanning by default |
-| `failOn` | `string` | Default fail threshold |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `ignoredPackages` | `string[]` | `[]` | Packages to skip (supports `*` wildcards) |
+| `ignoredRules` | `string[]` | `[]` | Rule IDs to ignore |
+| `trustedPackages` | `string[]` | `[esbuild, sharp, ...]` | Packages with reduced severity for install scripts |
+| `trustedPatterns` | `object` | `{node-gyp rebuild: true, ...}` | Install script patterns considered safe |
+| `scanCode` | `boolean` | `false` | Enable deep code scanning by default |
+| `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
+| `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
+| `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
+| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores |
+| `quiet` | `boolean` | `false` | Suppress warnings |
+| `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
+| `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
 
 ## GitHub Actions Integration
 
@@ -531,7 +552,7 @@ node src/index.js --node-modules /path/to/project/node_modules
 
 Hubert Kasperek
 
-[MIT License](https://github.com/Hukasx0/chain-audit-private/blob/main/LICENSE)
+[MIT License](https://github.com/hukasx0/chain-audit/blob/main/LICENSE)
 
 ---
 

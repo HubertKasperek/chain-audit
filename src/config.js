@@ -14,6 +14,10 @@ const DEFAULT_CONFIG = {
   ignoredRules: [],
   scanCode: false,
   failOn: null,
+  severity: null,      // Array of severity levels to show (e.g., ['critical', 'high'])
+  format: 'text',      // Output format: 'text', 'json', 'sarif'
+  verbose: false,      // Show detailed analysis
+  quiet: false,        // Suppress warnings
   // Known legitimate packages with install scripts
   trustedPackages: [
     'esbuild',
@@ -107,6 +111,26 @@ function validateConfig(config) {
   if (config.scanCode !== undefined && typeof config.scanCode !== 'boolean') {
     throw new Error('Config: scanCode must be a boolean');
   }
+  if (config.severity !== undefined) {
+    if (!Array.isArray(config.severity)) {
+      throw new Error('Config: severity must be an array of severity levels');
+    }
+    const validLevels = ['info', 'low', 'medium', 'high', 'critical'];
+    for (const level of config.severity) {
+      if (!validLevels.includes(level)) {
+        throw new Error(`Config: severity contains invalid level "${level}". Valid levels: ${validLevels.join(', ')}`);
+      }
+    }
+  }
+  if (config.format !== undefined && !['text', 'json', 'sarif'].includes(config.format)) {
+    throw new Error('Config: format must be one of: text, json, sarif');
+  }
+  if (config.verbose !== undefined && typeof config.verbose !== 'boolean') {
+    throw new Error('Config: verbose must be a boolean');
+  }
+  if (config.quiet !== undefined && typeof config.quiet !== 'boolean') {
+    throw new Error('Config: quiet must be a boolean');
+  }
 }
 
 /**
@@ -140,11 +164,29 @@ function mergeConfig(fileConfig, cliArgs) {
   if (fileConfig.maxFileSizeForCodeScan) {
     config.maxFileSizeForCodeScan = fileConfig.maxFileSizeForCodeScan;
   }
+  if (fileConfig.severity) {
+    config.severityFilter = fileConfig.severity;
+  }
+  if (fileConfig.format) {
+    config.format = fileConfig.format;
+  }
+  if (fileConfig.verbose !== undefined) {
+    config.verbose = fileConfig.verbose;
+  }
+  if (fileConfig.quiet !== undefined) {
+    config.quiet = fileConfig.quiet;
+  }
 
   // Apply CLI arguments (highest precedence)
   config.nodeModules = cliArgs.nodeModules;
   config.lockPath = cliArgs.lockPath;
-  config.format = cliArgs.format;
+
+  // CLI format overrides config only if explicitly set (not default 'text')
+  if (cliArgs.format && cliArgs.format !== 'text') {
+    config.format = cliArgs.format;
+  } else if (!fileConfig.format) {
+    config.format = cliArgs.format;
+  }
 
   if (cliArgs.failOn) {
     config.failOn = cliArgs.failOn;
@@ -157,6 +199,9 @@ function mergeConfig(fileConfig, cliArgs) {
   }
   if (cliArgs.verbose) {
     config.verbose = true;
+  }
+  if (cliArgs.quiet) {
+    config.quiet = true;
   }
 
   return config;
