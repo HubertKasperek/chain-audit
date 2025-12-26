@@ -155,6 +155,9 @@ function mergeConfig(fileConfig, cliArgs) {
   if (cliArgs.severityFilter) {
     config.severityFilter = cliArgs.severityFilter;
   }
+  if (cliArgs.verbose) {
+    config.verbose = true;
+  }
 
   return config;
 }

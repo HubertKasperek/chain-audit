@@ -54,6 +54,7 @@ function parseArgs(argv) {
     showVersion: false,
     scanCode: false,
     quiet: false,
+    verbose: false,
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -121,6 +122,11 @@ function parseArgs(argv) {
 
       case '--scan-code':
         args.scanCode = true;
+        break;
+
+      case '--verbose':
+      case '-V':
+        args.verbose = true;
         break;
 
       case '--quiet':

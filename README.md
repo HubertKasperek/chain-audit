@@ -106,6 +106,12 @@ chain-audit --sarif > results.sarif
 
 # Deep code analysis (slower but more thorough)
 chain-audit --scan-code
+
+# Detailed analysis with code snippets and evidence
+chain-audit --verbose --scan-code
+
+# Verbose output as JSON for further processing
+chain-audit --verbose --json --scan-code
 ```
 
 ## CLI Options
@@ -120,6 +126,7 @@ chain-audit --scan-code
 | `-s, --severity <levels>` | Show only specified severity levels (comma-separated, e.g., `critical,high`) |
 | `--fail-on <level>` | Exit 1 if max severity >= level |
 | `--scan-code` | Deep scan JS files for suspicious patterns |
+| `-V, --verbose` | Show detailed analysis: code snippets with line numbers, matched patterns, package metadata, trust assessment, false positive hints, and verification steps |
 | `-q, --quiet` | Suppress warnings |
 | `-v, --version` | Print version |
 | `-h, --help` | Show help |
@@ -191,6 +198,59 @@ Summary:
 
 Max severity: CRITICAL
 ```
+
+## Verbose Mode (`--verbose`)
+
+The `--verbose` (`-V`) option provides detailed analysis to investigate findings and distinguish false positives from real threats.
+
+### What's Included
+
+When `--verbose` is enabled, each finding includes:
+
+- **Code snippets** with line numbers showing exactly where issues were detected (3 lines of context before/after)
+- **Matched patterns** (regex) that triggered the detection
+- **Package metadata**: author, repository URL, license, homepage, full file path
+- **Trust assessment**: trust score (0-100) and trust level (low/medium/high)
+- **Evidence**: file paths, line numbers, column numbers, matched text
+- **False positive hints**: guidance on legitimate uses that might trigger the detection
+- **Verification steps**: actionable steps for manual investigation
+- **Risk assessment**: for critical findings, notes about known attack patterns (e.g., Shai-Hulud 2.0)
+
+### Trust Score Calculation
+
+The trust score (0-100) is calculated based on multiple factors:
+
+| Factor | Points | Description |
+|--------|--------|-------------|
+| **Trusted scope** | +40 | Package is from a known trusted scope (e.g., `@babel/*`, `@types/*`, `@eslint/*`) |
+| **Known legitimate** | +50 | Package is in the known legitimate packages list |
+| **Has repository** | +20 | Package has a repository URL in package.json |
+| **Has homepage** | +10 | Package has a homepage URL |
+| **Has author** | +10 | Package has author information |
+| **Has license** | +10 | Package has a license field |
+
+**Trust Levels:**
+- **High (70-100)**: Package is likely legitimate (e.g., from trusted scope with repository)
+- **Medium (40-69)**: Package has some trust indicators but needs verification
+- **Low (0-39)**: Package lacks trust indicators, warrants closer investigation
+
+**Example:**
+```
+Trust Assessment:
+  trust score: 50/100 (medium)
+  ✓ Has repository
+  ✓ Has homepage
+  ✓ Has license
+  ✗ No repository
+```
+
+### When to Use Verbose Mode
+
+- **Manual investigation** of suspicious findings
+- **Creating security reports** with detailed evidence
+- **Debugging false positives** by understanding what triggered the detection
+- **Incident response** when you need detailed evidence for documentation
+- **Code review** when you need to see exact code snippets and line numbers
 
 ## Configuration
 
@@ -444,7 +504,8 @@ npm rebuild
 4. **Combine with npm audit** – chain-audit detects different threats
 5. **Review all findings** – Some may be false positives
 6. **Use `--scan-code` periodically** – More thorough but slower
-7. **Keep registry secure** – Use private registry or npm audit signatures
+7. **Use `--verbose` for manual investigation** – Get code snippets and trust assessment to distinguish false positives
+8. **Keep registry secure** – Use private registry or npm audit signatures
 
 ## Contributing
 

@@ -90,6 +90,133 @@ function formatText(issues, summary, context) {
       if (issue.recommendation) {
         lines.push(`    ${color('fix:', colors.dim)} ${issue.recommendation}`);
       }
+      
+      // Verbose information
+      if (issue.verbose && context.verbose) {
+        lines.push('');
+        lines.push(`    ${color('═══ DETAILED ANALYSIS ═══', colors.cyan + colors.bold)}`);
+        
+        // Package metadata
+        if (issue.verbose.packageMetadata) {
+          const meta = issue.verbose.packageMetadata;
+          lines.push(`    ${color('Package Info:', colors.bold)}`);
+          if (meta.author) lines.push(`      ${color('author:', colors.dim)} ${meta.author}`);
+          if (meta.repository) lines.push(`      ${color('repository:', colors.dim)} ${meta.repository}`);
+          if (meta.license) lines.push(`      ${color('license:', colors.dim)} ${meta.license}`);
+          if (meta.homepage) lines.push(`      ${color('homepage:', colors.dim)} ${meta.homepage}`);
+          if (meta.fullPath) lines.push(`      ${color('path:', colors.dim)} ${meta.fullPath}`);
+        }
+        
+        // Trust indicators
+        if (issue.verbose.trustIndicators) {
+          const trust = issue.verbose.trustIndicators;
+          const trustColor = trust.trustLevel === 'high' ? colors.green : 
+                            trust.trustLevel === 'medium' ? colors.yellow : colors.red;
+          lines.push(`    ${color('Trust Assessment:', colors.bold)}`);
+          lines.push(`      ${color('trust score:', colors.dim)} ${color(`${trust.trustScore}/100 (${trust.trustLevel})`, trustColor)}`);
+          if (trust.trustedScope) lines.push(`      ${color('✓', colors.green)} Trusted scope: ${trust.scope}`);
+          if (trust.hasRepository) lines.push(`      ${color('✓', colors.green)} Has repository`);
+          else lines.push(`      ${color('✗', colors.red)} No repository`);
+          if (trust.knownLegitimate) lines.push(`      ${color('✓', colors.green)} Known legitimate package`);
+        }
+        
+        // Evidence
+        if (issue.verbose.evidence) {
+          lines.push(`    ${color('Evidence:', colors.bold)}`);
+          const evidence = issue.verbose.evidence;
+          for (const [key, value] of Object.entries(evidence)) {
+            if (value === null || value === undefined) continue;
+            if (typeof value === 'object' && !Array.isArray(value)) {
+              lines.push(`      ${color(key + ':', colors.dim)}`);
+              for (const [k, v] of Object.entries(value)) {
+                lines.push(`        ${color(k + ':', colors.dim)} ${formatValue(v)}`);
+              }
+            } else if (Array.isArray(value) && value.length > 0) {
+              lines.push(`      ${color(key + ':', colors.dim)}`);
+              for (const item of value.slice(0, 5)) {
+                if (typeof item === 'object') {
+                  const itemStr = Object.entries(item)
+                    .filter(([, v]) => v !== null && v !== undefined)
+                    .map(([k, v]) => `${k}: ${formatValue(v)}`)
+                    .join(', ');
+                  lines.push(`        - ${itemStr}`);
+                } else {
+                  lines.push(`        - ${formatValue(item)}`);
+                }
+              }
+              if (value.length > 5) {
+                lines.push(`        ${color(`... and ${value.length - 5} more`, colors.dim)}`);
+              }
+            } else {
+              lines.push(`      ${color(key + ':', colors.dim)} ${formatValue(value)}`);
+            }
+          }
+        }
+        
+        // Code snippet
+        if (issue.verbose.codeSnippet) {
+          lines.push(`    ${color('Code Snippet:', colors.bold)}`);
+          const snippetLines = issue.verbose.codeSnippet.split('\n');
+          for (const snippetLine of snippetLines) {
+            const isHighlighted = snippetLine.startsWith('>>>');
+            lines.push(`      ${isHighlighted ? color(snippetLine, colors.yellow) : color(snippetLine, colors.dim)}`);
+          }
+          if (issue.verbose.lineNumber) {
+            lines.push(`      ${color(`↑ Line ${issue.verbose.lineNumber}`, colors.cyan)}`);
+          }
+        }
+        
+        // Environment code snippet (for env_with_network)
+        if (issue.verbose.envCodeSnippet) {
+          lines.push(`    ${color('Environment Access:', colors.bold)}`);
+          const snippetLines = issue.verbose.envCodeSnippet.split('\n');
+          for (const snippetLine of snippetLines) {
+            const isHighlighted = snippetLine.startsWith('>>>');
+            lines.push(`      ${isHighlighted ? color(snippetLine, colors.yellow) : color(snippetLine, colors.dim)}`);
+          }
+        }
+        
+        if (issue.verbose.networkCodeSnippet) {
+          lines.push(`    ${color('Network Access:', colors.bold)}`);
+          const snippetLines = issue.verbose.networkCodeSnippet.split('\n');
+          for (const snippetLine of snippetLines) {
+            const isHighlighted = snippetLine.startsWith('>>>');
+            lines.push(`      ${isHighlighted ? color(snippetLine, colors.yellow) : color(snippetLine, colors.dim)}`);
+          }
+        }
+        
+        // Full script (for install scripts)
+        if (issue.verbose.fullScript && issue.verbose.fullScript.length < 500) {
+          lines.push(`    ${color('Full Script:', colors.bold)}`);
+          lines.push(`      ${color(issue.verbose.fullScript, colors.dim)}`);
+        }
+        
+        // Risk assessment
+        if (issue.verbose.riskAssessment) {
+          lines.push(`    ${color('Risk Assessment:', colors.bold)} ${color(issue.verbose.riskAssessment, colors.red)}`);
+        }
+        
+        // Verification steps
+        if (issue.verbose.verificationSteps) {
+          lines.push(`    ${color('Verification Steps:', colors.bold)}`);
+          for (const step of issue.verbose.verificationSteps) {
+            lines.push(`      ${color(step, colors.dim)}`);
+          }
+        }
+        
+        // False positive hints
+        if (issue.verbose.falsePositiveHints && issue.verbose.falsePositiveHints.length > 0) {
+          lines.push(`    ${color('False Positive Analysis:', colors.bold)}`);
+          for (const hint of issue.verbose.falsePositiveHints) {
+            const hintColor = hint.startsWith('✓') ? colors.green : 
+                             hint.startsWith('⚠') ? colors.yellow : colors.dim;
+            lines.push(`      ${color('•', colors.cyan)} ${color(hint, hintColor)}`);
+          }
+        }
+        
+        lines.push(`    ${color('═'.repeat(25), colors.cyan)}`);
+      }
+      
       lines.push('');
     }
   }
@@ -137,6 +264,25 @@ function getSeverityColor(severity) {
 }
 
 /**
+ * Format a value for display, truncating long strings
+ */
+function formatValue(value) {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'string') {
+    if (value.length > 80) {
+      return value.slice(0, 77) + '...';
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.length} items]`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
  * Format issues as JSON
  */
 function formatJson(issues, summary, context) {
@@ -154,15 +300,24 @@ function formatJson(issues, summary, context) {
   const payload = {
     version: context.version || null,
     timestamp: new Date().toISOString(),
-    issues: issues.map(issue => ({
-      severity: issue.severity,
-      reason: issue.reason,
-      detail: issue.detail,
-      recommendation: issue.recommendation || null,
-      package: issue.package,
-      version: issue.version,
-      path: issue.path,
-    })),
+    issues: issues.map(issue => {
+      const baseIssue = {
+        severity: issue.severity,
+        reason: issue.reason,
+        detail: issue.detail,
+        recommendation: issue.recommendation || null,
+        package: issue.package,
+        version: issue.version,
+        path: issue.path,
+      };
+      
+      // Include verbose data in JSON if verbose mode is enabled
+      if (context.verbose && issue.verbose) {
+        baseIssue.verbose = issue.verbose;
+      }
+      
+      return baseIssue;
+    }),
     summary: {
       ...summaryCounts,
       total: issues.length,
@@ -175,6 +330,7 @@ function formatJson(issues, summary, context) {
       packageCount: context.packageCount,
       severityFilter: context.severityFilter || null,
       failLevel: context.failLevel,
+      verbose: context.verbose || false,
     },
   };
 

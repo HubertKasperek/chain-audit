@@ -148,6 +148,7 @@ function run(argv = process.argv) {
     failLevel: config.failOn,
     severityFilter: config.severityFilter,
     version: pkgMeta.version,
+    verbose: config.verbose,
   };
 
   // Output results
@@ -204,6 +205,13 @@ ${color('OPTIONS:', colors.bold)}
   --fail-on <level>          Exit 1 when max severity >= level
                              (info|low|medium|high|critical)
   --scan-code                Scan JS files for suspicious patterns (slower)
+  -V, --verbose              Show detailed analysis for each finding:
+                             • Code snippets with line numbers
+                             • Matched patterns and evidence
+                             • Package metadata (author, repo, license)
+                             • Trust score assessment
+                             • False positive analysis hints
+                             • Verification steps
   -q, --quiet                Suppress warnings
   -v, --version              Print version
   -h, --help                 Show this help
@@ -233,6 +241,12 @@ ${color('EXAMPLES:', colors.bold)}
 
   # Full code analysis (slower but more thorough)
   chain-audit --scan-code --fail-on medium
+
+  # Detailed analysis with code snippets and evidence
+  chain-audit --verbose --scan-code
+
+  # Verbose output as JSON for further processing
+  chain-audit --verbose --json --scan-code
 
 ${color('CONFIGURATION:', colors.bold)}
   Create .chainauditrc.json in your project root:
