@@ -152,6 +152,9 @@ function mergeConfig(fileConfig, cliArgs) {
   if (cliArgs.scanCode) {
     config.scanCode = true;
   }
+  if (cliArgs.severityFilter) {
+    config.severityFilter = cliArgs.severityFilter;
+  }
 
   return config;
 }

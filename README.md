@@ -92,6 +92,12 @@ chain-audit
 # Fail CI on high severity issues
 chain-audit --fail-on high
 
+# Show only critical and high severity issues
+chain-audit --severity critical,high
+
+# Combine severity filter with fail-on
+chain-audit --severity critical,high --fail-on high
+
 # JSON output for processing
 chain-audit --json
 
@@ -111,6 +117,7 @@ chain-audit --scan-code
 | `-c, --config <path>` | Path to config file |
 | `--json` | Output as JSON |
 | `--sarif` | Output as SARIF (for GitHub Code Scanning) |
+| `-s, --severity <levels>` | Show only specified severity levels (comma-separated, e.g., `critical,high`) |
 | `--fail-on <level>` | Exit 1 if max severity >= level |
 | `--scan-code` | Deep scan JS files for suspicious patterns |
 | `-q, --quiet` | Suppress warnings |
@@ -126,6 +133,26 @@ chain-audit --scan-code
 | `medium` | Warrants investigation | Install scripts, shell execution patterns |
 | `low` | Informational | Native binaries, minimal metadata |
 | `info` | Metadata only | Trusted packages with install scripts |
+
+### Filtering by Severity
+
+Use `--severity` to show only specific severity levels. You can specify multiple levels separated by commas:
+
+```bash
+# Show only critical issues
+chain-audit --severity critical
+
+# Show critical and high issues
+chain-audit --severity critical,high
+
+# Show low and medium issues
+chain-audit --severity low,medium
+
+# Combine with --fail-on for CI pipelines
+chain-audit --severity critical,high --fail-on high
+```
+
+Issues will be displayed in the order they are found, grouped by the severity levels you specified.
 
 ## Example Output
 

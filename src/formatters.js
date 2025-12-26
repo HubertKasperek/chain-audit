@@ -53,6 +53,9 @@ function formatText(issues, summary, context) {
     lines.push(`${color('lockfile type:', colors.dim)} ${context.lockfileType}`);
   }
   lines.push(`${color('packages scanned:', colors.dim)} ${context.packageCount}`);
+  if (context.severityFilter) {
+    lines.push(`${color('severity filter:', colors.dim)} ${context.severityFilter.join(', ')}`);
+  }
   if (context.failLevel) {
     lines.push(`${color('fail threshold:', colors.dim)} ${context.failLevel}`);
   }
@@ -154,6 +157,7 @@ function formatJson(issues, summary, context) {
       lockfile: context.lockfile,
       lockfileType: context.lockfileType || null,
       packageCount: context.packageCount,
+      severityFilter: context.severityFilter || null,
       failLevel: context.failLevel,
     },
   };

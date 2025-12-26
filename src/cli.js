@@ -25,6 +25,19 @@ function normalizeSeverity(level) {
 }
 
 /**
+ * Parse severity filter string (comma-separated severity levels)
+ * @param {string} value - Comma-separated severity levels (e.g., "critical,high")
+ * @returns {string[]} Array of valid severity levels in the order specified
+ */
+function parseSeverityFilter(value) {
+  if (!value) return null;
+  const levels = value.split(',').map(s => s.trim().toLowerCase());
+  const validLevels = levels.filter(level => severitySet.has(level));
+  if (validLevels.length === 0) return null;
+  return validLevels;
+}
+
+/**
  * Parse command line arguments
  * @param {string[]} argv - Process arguments (includes node and script path)
  * @returns {Object} Parsed arguments
@@ -36,6 +49,7 @@ function parseArgs(argv) {
     configPath: null,
     format: 'text',
     failOn: null,
+    severityFilter: null,
     help: false,
     showVersion: false,
     scanCode: false,
@@ -91,6 +105,20 @@ function parseArgs(argv) {
         break;
       }
 
+      case '--severity':
+      case '-s': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        const parsed = parseSeverityFilter(value);
+        if (!parsed) {
+          throw new Error(
+            `Invalid --severity value "${value}". Valid levels: ${SEVERITY_LEVELS.join(', ')}`
+          );
+        }
+        args.severityFilter = parsed;
+        i += 1;
+        break;
+      }
+
       case '--scan-code':
         args.scanCode = true;
         break;
@@ -124,4 +152,5 @@ module.exports = {
   parseArgs,
   SEVERITY_LEVELS,
   normalizeSeverity,
+  parseSeverityFilter,
 };

@@ -132,13 +132,21 @@ function run(argv = process.argv) {
     }
   }
 
-  const summary = summarize(issues);
+  // Filter issues by severity if --severity flag is set
+  let filteredIssues = issues;
+  if (config.severityFilter && config.severityFilter.length > 0) {
+    const severitySet = new Set(config.severityFilter);
+    filteredIssues = issues.filter(issue => severitySet.has(issue.severity));
+  }
+
+  const summary = summarize(filteredIssues);
   const context = {
     nodeModules: config.nodeModules,
     lockfile: lockIndex.lockPresent ? resolvedLock : null,
     lockfileType: lockIndex.lockType,
     packageCount: packages.length,
     failLevel: config.failOn,
+    severityFilter: config.severityFilter,
     version: pkgMeta.version,
   };
 
@@ -146,13 +154,13 @@ function run(argv = process.argv) {
   let output;
   switch (config.format) {
     case 'json':
-      output = formatJson(issues, summary, context);
+      output = formatJson(filteredIssues, summary, context);
       break;
     case 'sarif':
-      output = formatSarif(issues, summary, context);
+      output = formatSarif(filteredIssues, summary, context);
       break;
     default:
-      output = formatText(issues, summary, context);
+      output = formatText(filteredIssues, summary, context);
   }
 
   console.log(output);
@@ -191,6 +199,8 @@ ${color('OPTIONS:', colors.bold)}
   -c, --config <path>        Path to config file (.chainauditrc.json)
   --json                     Output as JSON
   --sarif                    Output as SARIF (for GitHub Code Scanning)
+  -s, --severity <levels>    Show only specified severity levels (comma-separated)
+                             e.g., --severity critical,high or --severity low
   --fail-on <level>          Exit 1 when max severity >= level
                              (info|low|medium|high|critical)
   --scan-code                Scan JS files for suspicious patterns (slower)
@@ -211,6 +221,12 @@ ${color('EXAMPLES:', colors.bold)}
 
   # CI mode - fail on high severity issues
   chain-audit --json --fail-on high
+
+  # Show only critical and high severity issues
+  chain-audit --severity critical,high
+
+  # Combine severity filter with fail-on
+  chain-audit --severity critical,high --fail-on high
 
   # Scan specific path with SARIF output for GitHub
   chain-audit -n ./packages/app/node_modules --sarif
