@@ -132,7 +132,7 @@ function run(argv = process.argv) {
   const lockIndex = buildLockIndex(resolvedLock);
 
   // Collect and analyze packages
-  const packages = collectPackages(config.nodeModules);
+  const packages = collectPackages(config.nodeModules, config.maxNestedDepth);
   const issues = [];
 
   for (const pkg of packages) {

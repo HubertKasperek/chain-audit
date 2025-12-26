@@ -157,8 +157,11 @@ function mergeConfig(fileConfig, cliArgs) {
   if (fileConfig.scanCode !== undefined) {
     config.scanCode = fileConfig.scanCode;
   }
-  if (fileConfig.maxFileSizeForCodeScan) {
+  if (fileConfig.maxFileSizeForCodeScan !== undefined) {
     config.maxFileSizeForCodeScan = fileConfig.maxFileSizeForCodeScan;
+  }
+  if (fileConfig.maxNestedDepth !== undefined) {
+    config.maxNestedDepth = fileConfig.maxNestedDepth;
   }
   if (fileConfig.severity) {
     config.severityFilter = fileConfig.severity;
