@@ -201,7 +201,7 @@ Max severity: CRITICAL
 
 ## Verbose Mode (`--verbose`)
 
-The `--verbose` (`-V`) option provides detailed analysis to help security analysts investigate findings and distinguish false positives from real threats.
+The `--verbose` (`-V`) option provides detailed analysis to investigate findings and distinguish false positives from real threats.
 
 ### What's Included
 
@@ -248,7 +248,6 @@ Trust Assessment:
 
 - **Manual investigation** of suspicious findings
 - **Creating security reports** with detailed evidence
-- **Training security analysts** on attack patterns
 - **Debugging false positives** by understanding what triggered the detection
 - **Incident response** when you need detailed evidence for documentation
 - **Code review** when you need to see exact code snippets and line numbers
