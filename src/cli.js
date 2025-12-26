@@ -38,6 +38,33 @@ function parseSeverityFilter(value) {
 }
 
 /**
+ * Parse comma-separated list of strings
+ * @param {string} value - Comma-separated values
+ * @returns {string[]} Array of trimmed non-empty strings
+ */
+function parseCommaSeparatedList(value) {
+  if (!value) return null;
+  const items = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  return items.length > 0 ? items : null;
+}
+
+/**
+ * Parse non-negative integer value
+ * @param {string} value - String value to parse
+ * @param {string} flag - Flag name for error messages
+ * @param {boolean} allowZero - Whether to allow 0 (default: false)
+ * @returns {number} Parsed non-negative integer
+ */
+function parseNonNegativeInt(value, flag, allowZero = false) {
+  const num = parseInt(value, 10);
+  if (isNaN(num) || num < 0 || (!allowZero && num === 0)) {
+    const msg = allowZero ? 'non-negative integer' : 'positive integer';
+    throw new Error(`${flag} must be a ${msg}, got "${value}"`);
+  }
+  return num;
+}
+
+/**
  * Parse command line arguments
  * @param {string[]} argv - Process arguments (includes node and script path)
  * @returns {Object} Parsed arguments
@@ -56,6 +83,14 @@ function parseArgs(argv) {
     verbose: false,
     init: false,
     force: false,
+    // New CLI flags for config parity
+    ignoredPackages: null,
+    ignoredRules: null,
+    trustedPackages: null,
+    maxFileSize: null,
+    maxDepth: null,
+    maxFiles: null,
+    verifyIntegrity: false,
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -149,6 +184,68 @@ function parseArgs(argv) {
         args.force = true;
         break;
 
+      // New flags for config file parity
+      case '--ignore-packages':
+      case '-I': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        const parsed = parseCommaSeparatedList(value);
+        if (!parsed) {
+          throw new Error(`${arg} requires at least one package name`);
+        }
+        args.ignoredPackages = parsed;
+        i += 1;
+        break;
+      }
+
+      case '--ignore-rules':
+      case '-R': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        const parsed = parseCommaSeparatedList(value);
+        if (!parsed) {
+          throw new Error(`${arg} requires at least one rule ID`);
+        }
+        args.ignoredRules = parsed;
+        i += 1;
+        break;
+      }
+
+      case '--trust-packages':
+      case '-T': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        const parsed = parseCommaSeparatedList(value);
+        if (!parsed) {
+          throw new Error(`${arg} requires at least one package name`);
+        }
+        args.trustedPackages = parsed;
+        i += 1;
+        break;
+      }
+
+      case '--max-file-size': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        args.maxFileSize = parseNonNegativeInt(value, arg, false);
+        i += 1;
+        break;
+      }
+
+      case '--max-depth': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        args.maxDepth = parseNonNegativeInt(value, arg, false);
+        i += 1;
+        break;
+      }
+
+      case '--max-files': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        args.maxFiles = parseNonNegativeInt(value, arg, true); // 0 = unlimited
+        i += 1;
+        break;
+      }
+
+      case '--verify-integrity':
+        args.verifyIntegrity = true;
+        break;
+
       default:
         if (arg.startsWith('-')) {
           console.warn(`Warning: Unknown flag "${arg}" - ignoring`);
@@ -164,4 +261,6 @@ module.exports = {
   SEVERITY_LEVELS,
   normalizeSeverity,
   parseSeverityFilter,
+  parseCommaSeparatedList,
+  parseNonNegativeInt,
 };

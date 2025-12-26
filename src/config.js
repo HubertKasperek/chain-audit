@@ -43,6 +43,10 @@ const DEFAULT_CONFIG = {
   maxFileSizeForCodeScan: 1024 * 1024, // 1MB
   // Maximum depth to traverse nested node_modules
   maxNestedDepth: 10,
+  // Maximum number of JS files to scan per package (0 = unlimited)
+  maxFilesPerPackage: 0,
+  // Verify integrity hashes from lockfile
+  verifyIntegrity: false,
 };
 
 /**
@@ -127,6 +131,24 @@ function validateConfig(config) {
   if (config.verbose !== undefined && typeof config.verbose !== 'boolean') {
     throw new Error('Config: verbose must be a boolean');
   }
+  if (config.maxFileSizeForCodeScan !== undefined) {
+    if (typeof config.maxFileSizeForCodeScan !== 'number' || config.maxFileSizeForCodeScan <= 0) {
+      throw new Error('Config: maxFileSizeForCodeScan must be a positive number');
+    }
+  }
+  if (config.maxNestedDepth !== undefined) {
+    if (typeof config.maxNestedDepth !== 'number' || config.maxNestedDepth <= 0) {
+      throw new Error('Config: maxNestedDepth must be a positive number');
+    }
+  }
+  if (config.maxFilesPerPackage !== undefined) {
+    if (typeof config.maxFilesPerPackage !== 'number' || config.maxFilesPerPackage < 0) {
+      throw new Error('Config: maxFilesPerPackage must be a non-negative number (0 = unlimited)');
+    }
+  }
+  if (config.verifyIntegrity !== undefined && typeof config.verifyIntegrity !== 'boolean') {
+    throw new Error('Config: verifyIntegrity must be a boolean');
+  }
 }
 
 /**
@@ -163,6 +185,12 @@ function mergeConfig(fileConfig, cliArgs) {
   if (fileConfig.maxNestedDepth !== undefined) {
     config.maxNestedDepth = fileConfig.maxNestedDepth;
   }
+  if (fileConfig.maxFilesPerPackage !== undefined) {
+    config.maxFilesPerPackage = fileConfig.maxFilesPerPackage;
+  }
+  if (fileConfig.verifyIntegrity !== undefined) {
+    config.verifyIntegrity = fileConfig.verifyIntegrity;
+  }
   if (fileConfig.severity) {
     config.severityFilter = fileConfig.severity;
   }
@@ -197,6 +225,29 @@ function mergeConfig(fileConfig, cliArgs) {
     config.verbose = true;
   }
 
+  // New CLI args that override config
+  if (cliArgs.ignoredPackages) {
+    config.ignoredPackages = [...config.ignoredPackages, ...cliArgs.ignoredPackages];
+  }
+  if (cliArgs.ignoredRules) {
+    config.ignoredRules = [...config.ignoredRules, ...cliArgs.ignoredRules];
+  }
+  if (cliArgs.trustedPackages) {
+    config.trustedPackages = [...config.trustedPackages, ...cliArgs.trustedPackages];
+  }
+  if (cliArgs.maxFileSize !== undefined && cliArgs.maxFileSize !== null) {
+    config.maxFileSizeForCodeScan = cliArgs.maxFileSize;
+  }
+  if (cliArgs.maxDepth !== undefined && cliArgs.maxDepth !== null) {
+    config.maxNestedDepth = cliArgs.maxDepth;
+  }
+  if (cliArgs.maxFiles !== undefined && cliArgs.maxFiles !== null) {
+    config.maxFilesPerPackage = cliArgs.maxFiles;
+  }
+  if (cliArgs.verifyIntegrity) {
+    config.verifyIntegrity = true;
+  }
+
   return config;
 }
 
@@ -228,7 +279,9 @@ function generateExampleConfig() {
     format: "text",
     verbose: false,
     maxFileSizeForCodeScan: 1048576,
-    maxNestedDepth: 10
+    maxNestedDepth: 10,
+    maxFilesPerPackage: 0,
+    verifyIntegrity: false
   };
 
   return JSON.stringify(exampleConfig, null, 2);

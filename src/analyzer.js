@@ -200,22 +200,55 @@ function analyzePackage(pkg, lockIndex, config = {}) {
   const issues = [];
   const verbose = config.verbose || false;
 
-  // 1. Check lockfile integrity
+  // 0. Check for package.json parse errors (potentially malicious or corrupted)
+  if (pkg._parseError) {
+    const issue = {
+      severity: 'high',
+      reason: 'corrupted_package_json',
+      detail: `Cannot parse package.json: ${pkg._errorMessage}. This could indicate tampering or corruption.`,
+      recommendation: 'Investigate why package.json is malformed. Run `npm ci` to reinstall packages.',
+    };
+
+    if (verbose) {
+      issue.verbose = {
+        evidence: {
+          errorType: pkg._errorType,
+          errorMessage: pkg._errorMessage,
+          packagePath: pkg.dir,
+        },
+        falsePositiveHints: [
+          '⚠ Corrupted package.json is unusual and should be investigated',
+          'Could be caused by interrupted download or disk corruption',
+          'Could be intentional tampering to hide malicious content',
+        ],
+        riskAssessment: 'HIGH - Package metadata cannot be verified',
+      };
+    }
+
+    issues.push(issue);
+  }
+
+  // 1. Check lockfile integrity (version mismatch, extraneous packages)
   checkLockfileIntegrity(pkg, lockIndex, issues, verbose);
 
-  // 2. Analyze install scripts
+  // 2. Additional structure integrity checks (optional, enabled with --verify-integrity)
+  if (config.verifyIntegrity) {
+    checkPackageStructureIntegrity(pkg, lockIndex, issues, verbose);
+  }
+
+  // 3. Analyze install scripts
   analyzeScripts(pkg, config, issues, verbose);
 
-  // 3. Check for native binaries
+  // 4. Check for native binaries
   checkNativeBinaries(pkg, issues, verbose);
 
-  // 4. Check for typosquatting
+  // 5. Check for typosquatting
   checkTyposquatting(pkg, issues, verbose);
 
-  // 5. Check metadata anomalies
+  // 6. Check metadata anomalies
   checkMetadataAnomalies(pkg, issues, verbose);
 
-  // 6. Optional: Deep code analysis
+  // 7. Optional: Deep code analysis
   if (config.scanCode) {
     analyzeCode(pkg, config, issues, verbose);
   }
@@ -303,6 +336,101 @@ function checkLockfileIntegrity(pkg, lockIndex, issues, verbose = false) {
     
     issues.push(issue);
   }
+}
+
+/**
+ * Perform additional integrity checks on package structure
+ * Note: We cannot verify npm's tarball integrity hashes after extraction.
+ * Instead, this checks for signs of tampering in package structure.
+ */
+function checkPackageStructureIntegrity(pkg, lockIndex, issues, verbose = false) {
+  if (!lockIndex.lockPresent) return;
+
+  const lockByPath = lockIndex.indexByPath.get(pkg.relativePath);
+  const lockByName = lockIndex.indexByName.get(pkg.name);
+  const lockEntry = lockByPath || lockByName;
+
+  if (!lockEntry) return; // Already flagged as extraneous in checkLockfileIntegrity
+
+  // Check 1: Package should have a name matching the expected name
+  const expectedName = lockByPath ? extractPackageNameFromPath(pkg.relativePath) : pkg.name;
+  if (pkg.name && pkg.name !== expectedName && !pkg.name.startsWith('@')) {
+    const issue = {
+      severity: 'high',
+      reason: 'package_name_mismatch',
+      detail: `Package at "${pkg.relativePath}" has name "${pkg.name}" but expected "${expectedName}"`,
+      recommendation: 'Package may have been swapped or tampered with. Run `npm ci` to reinstall.',
+    };
+
+    if (verbose) {
+      issue.verbose = {
+        evidence: {
+          packagePath: pkg.relativePath,
+          actualName: pkg.name,
+          expectedName: expectedName,
+        },
+        falsePositiveHints: [
+          'This could indicate package substitution attack',
+          'Check if package.json was manually modified',
+          'Verify with `npm ls` to see expected packages',
+        ],
+        riskAssessment: 'HIGH - Package identity mismatch',
+      };
+    }
+
+    issues.push(issue);
+  }
+
+  // Check 2: If lockfile has resolved URL, check it's from expected registry
+  if (lockEntry.resolved) {
+    const resolved = lockEntry.resolved;
+    const suspiciousPatterns = [
+      /^file:/,  // Local file - unusual for published packages
+      /localhost/i,
+      /127\.0\.0\.1/,
+      /0\.0\.0\.0/,
+    ];
+
+    for (const pattern of suspiciousPatterns) {
+      if (pattern.test(resolved)) {
+        const issue = {
+          severity: 'high',
+          reason: 'suspicious_resolved_url',
+          detail: `Package resolved from suspicious URL: ${resolved.slice(0, 100)}`,
+          recommendation: 'Package may be from untrusted source. Verify the resolved URL is intentional.',
+        };
+
+        if (verbose) {
+          issue.verbose = {
+            evidence: {
+              resolvedUrl: resolved,
+              packageName: pkg.name,
+              matchedPattern: pattern.source,
+            },
+            falsePositiveHints: [
+              'Local packages (file:) are normal for monorepos/workspaces',
+              'Check if this is an intentional local dependency',
+            ],
+          };
+        }
+
+        issues.push(issue);
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Extract expected package name from relative path
+ */
+function extractPackageNameFromPath(relativePath) {
+  const parts = relativePath.split('/');
+  // Handle scoped packages (@scope/name)
+  if (parts[0] && parts[0].startsWith('@') && parts.length >= 2) {
+    return `${parts[0]}/${parts[1]}`;
+  }
+  return parts[0];
 }
 
 /**
@@ -948,9 +1076,13 @@ function checkMetadataAnomalies(pkg, issues, verbose = false) {
  */
 function analyzeCode(pkg, config, issues, verbose = false) {
   const maxFileSize = config.maxFileSizeForCodeScan || 1024 * 1024;
-  const jsFiles = findJsFiles(pkg.dir, 2); // Only top 2 levels
+  const maxFiles = config.maxFilesPerPackage || 0; // 0 = unlimited
+  const jsFiles = findJsFiles(pkg.dir, 5); // Scan up to 5 levels deep
 
-  for (const filePath of jsFiles.slice(0, 10)) { // Limit files scanned
+  // Apply file limit (0 means scan all files)
+  const filesToScan = maxFiles > 0 ? jsFiles.slice(0, maxFiles) : jsFiles;
+
+  for (const filePath of filesToScan) {
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > maxFileSize) continue;

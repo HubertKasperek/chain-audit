@@ -112,6 +112,18 @@ chain-audit --verbose --scan-code
 
 # Verbose output as JSON for further processing
 chain-audit --verbose --json --scan-code
+
+# Ignore specific packages and rules
+chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
+
+# Additional structure integrity checks
+chain-audit --verify-integrity --fail-on high
+
+# Deep scan with no file limit
+chain-audit --scan-code --max-files 0 --verbose
+
+# Custom scan limits
+chain-audit --max-file-size 2097152 --max-depth 15
 ```
 
 ## CLI Options
@@ -131,6 +143,15 @@ chain-audit --verbose --json --scan-code
 | `-h, --help` | Show help |
 | `--init` | Generate example config file (`.chainauditrc.json`) |
 | `-f, --force` | Force overwrite existing config file (use with `--init`) |
+| **Filtering Options** | |
+| `-I, --ignore-packages <list>` | Ignore packages (comma-separated, supports globs, e.g., `@types/*,lodash`) |
+| `-R, --ignore-rules <list>` | Ignore rule IDs (comma-separated, e.g., `native_binary,install_script`) |
+| `-T, --trust-packages <list>` | Trust packages (comma-separated, supports globs, e.g., `esbuild,@swc/*`) |
+| **Scan Options** | |
+| `--max-file-size <bytes>` | Max file size to scan (default: 1048576 = 1MB) |
+| `--max-depth <n>` | Max nested node_modules depth (default: 10) |
+| `--max-files <n>` | Max JS files to scan per package (0 = unlimited, default: 0) |
+| `--verify-integrity` | Additional checks for package structure tampering |
 
 ## Severity Levels
 
@@ -301,7 +322,9 @@ Alternatively, you can manually create a config file in your project root. Suppo
   "format": "text",
   "verbose": false,
   "maxFileSizeForCodeScan": 1048576,
-  "maxNestedDepth": 10
+  "maxNestedDepth": 10,
+  "maxFilesPerPackage": 0,
+  "verifyIntegrity": false
 }
 ```
 
@@ -320,6 +343,8 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores |
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
+| `maxFilesPerPackage` | `number` | `0` | Max JS files to scan per package (0 = unlimited) |
+| `verifyIntegrity` | `boolean` | `false` | Enable additional package structure integrity checks |
 
 ## GitHub Actions Integration
 
@@ -471,6 +496,11 @@ chain-audit automatically detects and parses:
 ### Critical Severity
 - **extraneous_package** – Package in node_modules not in lockfile
 - **version_mismatch** – Installed version differs from lockfile
+- **corrupted_package_json** – Package has malformed or unreadable package.json
+
+### High Severity (with `--verify-integrity`)
+- **package_name_mismatch** – Package name in package.json doesn't match expected from path
+- **suspicious_resolved_url** – Package resolved from local file or suspicious URL
 - **pipe_to_shell** – Script pipes content to shell (`| bash`)
 - **potential_env_exfiltration** – Env access + network in install script
 - **env_with_network** – Code accesses env vars and has network/exec capabilities
