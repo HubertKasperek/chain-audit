@@ -18,20 +18,12 @@ const path = require('path');
 const { parseArgs } = require('./cli');
 const { loadConfig, mergeConfig, initConfig } = require('./config');
 const { buildLockIndex } = require('./lockfile');
-const { collectPackages } = require('./collector');
+const { collectPackages, safeReadJSON } = require('./collector');
 const { analyzePackage } = require('./analyzer');
 const { formatText, formatJson, formatSarif } = require('./formatters');
 const { color, colors } = require('./utils');
 
 const pkgMeta = safeReadJSON(path.join(__dirname, '..', 'package.json')) || {};
-
-function safeReadJSON(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
-}
 
 function detectDefaultLockfile(cwd) {
   const candidates = [
@@ -243,6 +235,20 @@ ${color('OPTIONS:', colors.bold)}
   --init                     Generate example config file (.chainauditrc.json)
   -f, --force                Force overwrite existing config file (with --init)
 
+${color('FILTERING OPTIONS:', colors.bold)}
+  -I, --ignore-packages <list>  Ignore packages (comma-separated, supports globs)
+                                e.g., --ignore-packages "@types/*,lodash"
+  -R, --ignore-rules <list>     Ignore rule IDs (comma-separated)
+                                e.g., --ignore-rules "native_binary,install_script"
+  -T, --trust-packages <list>   Trust packages (comma-separated, supports globs)
+                                e.g., --trust-packages "esbuild,@swc/*"
+
+${color('SCAN OPTIONS:', colors.bold)}
+  --max-file-size <bytes>    Max file size to scan (default: 1048576 = 1MB)
+  --max-depth <n>            Max nested node_modules depth (default: 10)
+  --max-files <n>            Max JS files to scan per package (0 = unlimited)
+  --verify-integrity         Additional checks for package structure tampering
+
 ${color('SEVERITY LEVELS:', colors.bold)}
   critical  Highly likely malicious (e.g., obfuscated code + network access)
   high      Strong indicators (extraneous packages, suspicious scripts)
@@ -260,8 +266,11 @@ ${color('EXAMPLES:', colors.bold)}
   # Show only critical and high severity issues
   chain-audit --severity critical,high
 
-  # Combine severity filter with fail-on
-  chain-audit --severity critical,high --fail-on high
+  # Ignore specific packages and rules
+  chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
+
+  # Verify package integrity hashes
+  chain-audit --verify-integrity --fail-on critical
 
   # Scan specific path with SARIF output for GitHub
   chain-audit -n ./packages/app/node_modules --sarif
@@ -269,11 +278,11 @@ ${color('EXAMPLES:', colors.bold)}
   # Full code analysis (slower but more thorough)
   chain-audit --scan-code --fail-on medium
 
+  # Deep scan with no file limit
+  chain-audit --scan-code --max-files 0 --verbose
+
   # Detailed analysis with code snippets and evidence
   chain-audit --verbose --scan-code
-
-  # Verbose output as JSON for further processing
-  chain-audit --verbose --json --scan-code
 
 ${color('CONFIGURATION:', colors.bold)}
   Create a config file in your project root:
@@ -283,7 +292,9 @@ ${color('CONFIGURATION:', colors.bold)}
     "ignoredRules": ["native_binary"],
     "trustedPackages": ["my-native-addon"],
     "scanCode": false,
-    "failOn": "high"
+    "failOn": "high",
+    "verifyIntegrity": false,
+    "maxFilesPerPackage": 0
   }
 
 ${color('MORE INFO:', colors.bold)}

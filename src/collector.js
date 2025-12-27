@@ -4,16 +4,82 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Safely read and parse a JSON file
+ * Error types for JSON reading
+ */
+const JSON_READ_ERROR = {
+  FILE_NOT_FOUND: 'FILE_NOT_FOUND',
+  PERMISSION_DENIED: 'PERMISSION_DENIED',
+  PARSE_ERROR: 'PARSE_ERROR',
+  UNKNOWN: 'UNKNOWN',
+};
+
+/**
+ * Safely read and parse a JSON file with detailed error information
+ * @param {string} filePath - Path to JSON file
+ * @param {Object} options - Options
+ * @param {boolean} options.warnOnError - Whether to log warnings on errors (default: false)
+ * @returns {Object} Result object with { data, error, errorType }
+ */
+function safeReadJSONWithDetails(filePath, options = {}) {
+  const warnOnError = options.warnOnError || false;
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    try {
+      const data = JSON.parse(content);
+      return { data, error: null, errorType: null };
+    } catch (parseErr) {
+      if (warnOnError) {
+        console.warn(`Warning: Invalid JSON in ${filePath}: ${parseErr.message}`);
+      }
+      return {
+        data: null,
+        error: parseErr.message,
+        errorType: JSON_READ_ERROR.PARSE_ERROR,
+        filePath,
+      };
+    }
+  } catch (readErr) {
+    if (readErr.code === 'ENOENT') {
+      return {
+        data: null,
+        error: 'File not found',
+        errorType: JSON_READ_ERROR.FILE_NOT_FOUND,
+        filePath,
+      };
+    }
+    if (readErr.code === 'EACCES' || readErr.code === 'EPERM') {
+      if (warnOnError) {
+        console.warn(`Warning: Permission denied reading ${filePath}`);
+      }
+      return {
+        data: null,
+        error: 'Permission denied',
+        errorType: JSON_READ_ERROR.PERMISSION_DENIED,
+        filePath,
+      };
+    }
+    if (warnOnError) {
+      console.warn(`Warning: Cannot read ${filePath}: ${readErr.message}`);
+    }
+    return {
+      data: null,
+      error: readErr.message,
+      errorType: JSON_READ_ERROR.UNKNOWN,
+      filePath,
+    };
+  }
+}
+
+/**
+ * Safely read and parse a JSON file (simplified API)
  * @param {string} filePath - Path to JSON file
  * @returns {Object|null} Parsed JSON or null on error
+ * @deprecated Use safeReadJSONWithDetails for better error handling
  */
 function safeReadJSON(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
+  const result = safeReadJSONWithDetails(filePath);
+  return result.data;
 }
 
 /**
@@ -128,15 +194,48 @@ function processPackage(pkgDir, pkgRel, depth, stack, packages) {
  * Read package.json and extract relevant information
  * @param {string} dir - Package directory
  * @param {string} relativePath - Relative path from node_modules root
- * @returns {Object} Package information
+ * @returns {Object} Package information with optional parseError flag
  */
 function readPackage(dir, relativePath) {
   const pkgJsonPath = path.join(dir, 'package.json');
-  const pkg = safeReadJSON(pkgJsonPath);
+  const result = safeReadJSONWithDetails(pkgJsonPath, { warnOnError: true });
 
-  if (!pkg) {
+  // If file not found, return null (directory is not a valid package)
+  if (result.errorType === JSON_READ_ERROR.FILE_NOT_FOUND) {
     return null;
   }
+
+  // If there was a parse error or other read error, return a minimal package
+  // object with error information so it can still be flagged
+  if (result.error) {
+    return {
+      name: path.basename(dir),
+      version: 'unknown',
+      description: '',
+      scripts: {},
+      dependencies: {},
+      devDependencies: {},
+      peerDependencies: {},
+      optionalDependencies: {},
+      bin: null,
+      main: null,
+      module: null,
+      exports: null,
+      author: null,
+      repository: null,
+      homepage: null,
+      license: null,
+      publishConfig: null,
+      dir,
+      relativePath,
+      // Error information for security analysis
+      _parseError: true,
+      _errorType: result.errorType,
+      _errorMessage: result.error,
+    };
+  }
+
+  const pkg = result.data;
 
   return {
     name: pkg.name || path.basename(dir),
@@ -190,4 +289,7 @@ function normalizeRepository(repo) {
 module.exports = {
   collectPackages,
   readPackage,
+  safeReadJSON,
+  safeReadJSONWithDetails,
+  JSON_READ_ERROR,
 };

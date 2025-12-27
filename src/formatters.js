@@ -416,6 +416,27 @@ function generateSarifRules() {
       defaultConfiguration: { level: 'error' },
     },
     {
+      id: 'package_name_mismatch',
+      name: 'PackageNameMismatch',
+      shortDescription: { text: 'Package name does not match expected' },
+      fullDescription: { text: 'Package at path has different name than expected from directory' },
+      defaultConfiguration: { level: 'error' },
+    },
+    {
+      id: 'suspicious_resolved_url',
+      name: 'SuspiciousResolvedUrl',
+      shortDescription: { text: 'Package from suspicious URL' },
+      fullDescription: { text: 'Package resolved from local file or suspicious URL' },
+      defaultConfiguration: { level: 'error' },
+    },
+    {
+      id: 'corrupted_package_json',
+      name: 'CorruptedPackageJson',
+      shortDescription: { text: 'Corrupted or malformed package.json' },
+      fullDescription: { text: 'Package has a malformed package.json that cannot be parsed' },
+      defaultConfiguration: { level: 'error' },
+    },
+    {
       id: 'install_script',
       name: 'InstallScript',
       shortDescription: { text: 'Has install lifecycle script' },

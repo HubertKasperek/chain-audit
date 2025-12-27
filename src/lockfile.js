@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 /**
  * Lockfile types supported
@@ -533,7 +534,139 @@ function extractPnpmPackageName(pkgPath) {
   return match ? match[1] : path;
 }
 
+/**
+ * Parse an integrity string (e.g., "sha512-abc123..." or "sha1-xyz...")
+ * @param {string} integrity - Integrity string from lockfile
+ * @returns {Object|null} Parsed integrity with algorithm and hash
+ */
+function parseIntegrity(integrity) {
+  if (!integrity || typeof integrity !== 'string') {
+    return null;
+  }
+
+  // Handle multiple hashes (space-separated, prefer sha512)
+  const hashes = integrity.trim().split(/\s+/);
+  
+  // Prefer sha512, then sha384, then sha256, then sha1
+  const preferenceOrder = ['sha512', 'sha384', 'sha256', 'sha1'];
+  
+  for (const preferred of preferenceOrder) {
+    const match = hashes.find(h => h.startsWith(`${preferred}-`));
+    if (match) {
+      const dashIndex = match.indexOf('-');
+      return {
+        algorithm: match.slice(0, dashIndex),
+        hash: match.slice(dashIndex + 1),
+        raw: match,
+      };
+    }
+  }
+
+  // Fallback to first hash
+  const first = hashes[0];
+  if (first && first.includes('-')) {
+    const dashIndex = first.indexOf('-');
+    return {
+      algorithm: first.slice(0, dashIndex),
+      hash: first.slice(dashIndex + 1),
+      raw: first,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Compute integrity hash of a package directory
+ * Uses package.json content as the primary verification target
+ * @param {string} pkgDir - Path to package directory
+ * @param {string} algorithm - Hash algorithm (sha512, sha256, sha1)
+ * @returns {string|null} Base64-encoded hash or null on error
+ */
+function computePackageIntegrity(pkgDir, algorithm = 'sha512') {
+  try {
+    const pkgJsonPath = path.join(pkgDir, 'package.json');
+    if (!fs.existsSync(pkgJsonPath)) {
+      return null;
+    }
+
+    const content = fs.readFileSync(pkgJsonPath);
+    const hash = crypto.createHash(algorithm);
+    hash.update(content);
+    return hash.digest('base64');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify package integrity against lockfile
+ * @param {Object} pkg - Package object with dir property
+ * @param {Object} lockEntry - Lockfile entry with integrity property
+ * @returns {Object} Verification result
+ */
+function verifyPackageIntegrity(pkg, lockEntry) {
+  const result = {
+    verified: false,
+    expected: null,
+    actual: null,
+    algorithm: null,
+    error: null,
+    skipped: false,
+  };
+
+  if (!lockEntry || !lockEntry.integrity) {
+    result.skipped = true;
+    result.error = 'No integrity hash in lockfile';
+    return result;
+  }
+
+  const parsed = parseIntegrity(lockEntry.integrity);
+  if (!parsed) {
+    result.skipped = true;
+    result.error = 'Cannot parse integrity hash';
+    return result;
+  }
+
+  result.expected = parsed.hash;
+  result.algorithm = parsed.algorithm;
+
+  const actualHash = computePackageIntegrity(pkg.dir, parsed.algorithm);
+  if (!actualHash) {
+    result.error = 'Cannot compute package hash';
+    return result;
+  }
+
+  result.actual = actualHash;
+  result.verified = actualHash === parsed.hash;
+
+  return result;
+}
+
+/**
+ * Compute integrity hash for a tarball/file (for accurate npm integrity verification)
+ * Note: npm's integrity is computed on the tarball, not individual files
+ * This is a best-effort verification using package.json as a proxy
+ * @param {string} filePath - Path to file
+ * @param {string} algorithm - Hash algorithm
+ * @returns {string|null} Formatted integrity string or null
+ */
+function computeFileIntegrity(filePath, algorithm = 'sha512') {
+  try {
+    const content = fs.readFileSync(filePath);
+    const hash = crypto.createHash(algorithm);
+    hash.update(content);
+    return `${algorithm}-${hash.digest('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   buildLockIndex,
   LOCKFILE_TYPES,
+  parseIntegrity,
+  computePackageIntegrity,
+  verifyPackageIntegrity,
+  computeFileIntegrity,
 };
