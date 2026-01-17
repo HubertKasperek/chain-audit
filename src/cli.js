@@ -258,8 +258,9 @@ function parseArgs(argv) {
 
       default:
         if (arg.startsWith('-')) {
-          console.warn(`Warning: Unknown flag "${arg}" - ignoring`);
+          throw new Error(`Unknown flag: "${arg}". Use --help to see available options.`);
         }
+        break;
     }
   }
 
