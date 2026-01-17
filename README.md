@@ -566,6 +566,8 @@ npx chain-audit --fail-on high
 npm rebuild
 ```
 
+> 💡 **Note:** chain-audit analyzes scripts by reading them from `package.json` files (static analysis), not by executing them. This means it can detect malicious scripts even when using `--ignore-scripts`, because it reads the script content as text and checks for suspicious patterns
+
 > ⚠️ **Warning:** Even with `--ignore-scripts`, there is no 100% guarantee of security. Malicious code could execute when the package is `require()`d, or exploit vulnerabilities during extraction. For maximum security:
 > - Run installation in a **sandboxed environment**: Docker, Podman, or a VM (VirtualBox, VMware, QEMU/KVM)
 > - Use ephemeral CI runners (GitHub Actions, GitLab CI) that are destroyed after each run
