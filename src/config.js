@@ -14,25 +14,15 @@ const DEFAULT_CONFIG = {
   ignoredRules: [],
   scanCode: false,
   checkTyposquatting: false,  // Typosquatting detection (disabled by default due to false positives)
+  checkLockfile: false,        // Lockfile integrity checks (disabled by default due to false positives)
   failOn: null,
   severity: null,      // Array of severity levels to show (e.g., ['critical', 'high'])
   format: 'text',      // Output format: 'text', 'json', 'sarif'
   verbose: false,      // Show detailed analysis
   // Known legitimate packages with install scripts
-  trustedPackages: [
-    'esbuild',
-    'swc',
-    '@swc/*',
-    'sharp',
-    'better-sqlite3',
-    'bcrypt',
-    'node-sass',
-    'puppeteer',
-    'playwright',
-    '@playwright/*',
-    'electron',
-    'node-gyp',
-  ],
+  // NOTE: Whitelist cleared - all packages are now checked without exceptions.
+  // Users can still configure trustedPackages in .chainauditrc.json if needed.
+  trustedPackages: [],
   // Patterns that reduce severity for known legitimate use cases
   trustedPatterns: {
     // node-gyp rebuild is common for native modules
@@ -118,6 +108,9 @@ function validateConfig(config) {
   if (config.checkTyposquatting !== undefined && typeof config.checkTyposquatting !== 'boolean') {
     throw new Error('Config: checkTyposquatting must be a boolean');
   }
+  if (config.checkLockfile !== undefined && typeof config.checkLockfile !== 'boolean') {
+    throw new Error('Config: checkLockfile must be a boolean');
+  }
   if (config.severity !== undefined) {
     if (!Array.isArray(config.severity)) {
       throw new Error('Config: severity must be an array of severity levels');
@@ -186,6 +179,9 @@ function mergeConfig(fileConfig, cliArgs) {
   if (fileConfig.checkTyposquatting !== undefined) {
     config.checkTyposquatting = fileConfig.checkTyposquatting;
   }
+  if (fileConfig.checkLockfile !== undefined) {
+    config.checkLockfile = fileConfig.checkLockfile;
+  }
   if (fileConfig.maxFileSizeForCodeScan !== undefined) {
     config.maxFileSizeForCodeScan = fileConfig.maxFileSizeForCodeScan;
   }
@@ -227,6 +223,9 @@ function mergeConfig(fileConfig, cliArgs) {
   }
   if (cliArgs.checkTyposquatting) {
     config.checkTyposquatting = true;
+  }
+  if (cliArgs.checkLockfile) {
+    config.checkLockfile = true;
   }
   if (cliArgs.severityFilter) {
     config.severityFilter = cliArgs.severityFilter;
@@ -285,6 +284,7 @@ function generateExampleConfig() {
     },
     scanCode: false,
     checkTyposquatting: false,
+    checkLockfile: false,
     failOn: "high",
     severity: ["critical", "high", "medium"],
     format: "text",

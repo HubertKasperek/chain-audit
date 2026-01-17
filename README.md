@@ -156,6 +156,7 @@ chain-audit --check-typosquatting
 | `--max-files <n>` | Max JS files to scan per package (0 = unlimited, default: 0) |
 | `--verify-integrity` | Additional checks for package structure tampering |
 | `--check-typosquatting` | Enable typosquatting detection (disabled by default) |
+| `--check-lockfile` | Check lockfile integrity (disabled by default due to false positives) |
 
 ## Severity Levels
 
@@ -165,7 +166,7 @@ chain-audit --check-typosquatting
 | `high` | Strong attack indicators | Suspicious install scripts with network/exec, typosquatting |
 | `medium` | Warrants investigation | Install scripts, shell execution patterns |
 | `low` | Informational | Native binaries, minimal metadata |
-| `info` | Metadata only | Trusted packages with install scripts |
+| `info` | Metadata only | Packages with install scripts that match trusted patterns (if configured) |
 
 ### Filtering by Severity
 
@@ -248,15 +249,17 @@ The trust score (0-100) is calculated based on multiple factors:
 
 | Factor | Points | Description |
 |--------|--------|-------------|
-| **Trusted scope** | +40 | Package is from a known trusted scope (e.g., `@babel/*`, `@types/*`, `@eslint/*`) |
-| **Known legitimate** | +50 | Package is in the known legitimate packages list |
+| **Trusted scope** | +40 | Package is from a scope listed in `trustedPackages` config (if configured) |
+| **Known legitimate** | +50 | Package is in the `trustedPackages` config list (if configured) |
 | **Has repository** | +20 | Package has a repository URL in package.json |
 | **Has homepage** | +10 | Package has a homepage URL |
 | **Has author** | +10 | Package has author information |
 | **Has license** | +10 | Package has a license field |
 
+**Note:** By default, no packages are whitelisted. All packages are checked with equal severity. You can configure `trustedPackages` in `.chainauditrc.json` if you need to reduce false positives for specific packages.
+
 **Trust Levels:**
-- **High (70-100)**: Package is likely legitimate (e.g., from trusted scope with repository)
+- **High (70-100)**: Package is likely legitimate (e.g., configured as trusted with repository)
 - **Medium (40-69)**: Package has some trust indicators but needs verification
 - **Low (0-39)**: Package lacks trust indicators, warrants closer investigation
 
@@ -312,9 +315,9 @@ Alternatively, you can manually create a config file in your project root. Suppo
     "native_binary"
   ],
   "trustedPackages": [
-    "esbuild",
-    "@swc/*",
-    "sharp"
+    // Empty by default - all packages are checked without exceptions
+    // Add packages here only if you need to reduce false positives for specific packages
+    // Example: "esbuild", "@swc/*", "sharp"
   ],
   "trustedPatterns": {
     "node-gyp rebuild": true,
@@ -339,7 +342,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 |--------|------|---------|-------------|
 | `ignoredPackages` | `string[]` | `[]` | Packages to skip (supports `*` wildcards) |
 | `ignoredRules` | `string[]` | `[]` | Rule IDs to ignore |
-| `trustedPackages` | `string[]` | `[esbuild, sharp, ...]` | Packages with reduced severity for install scripts |
+| `trustedPackages` | `string[]` | `[]` | Packages with reduced severity for install scripts (empty by default - all packages are checked) |
 | `trustedPatterns` | `object` | `{node-gyp rebuild: true, ...}` | Install script patterns considered safe |
 | `scanCode` | `boolean` | `false` | Enable deep code scanning by default |
 | `checkTyposquatting` | `boolean` | `false` | Enable typosquatting detection (disabled by default to reduce false positives) |
@@ -578,6 +581,7 @@ npm rebuild
 6. **Use `--scan-code` periodically** – More thorough but slower
 7. **Use `--verbose` for manual investigation** – Get code snippets and trust assessment to distinguish false positives
 8. **Keep registry secure** – Use private registry or npm audit signatures
+9. **All packages are checked equally** – No packages are whitelisted by default. Even popular packages like `sharp`, `esbuild`, or `@babel/*` are checked for malicious patterns. This ensures that compromised packages are detected regardless of their reputation.
 
 ## Contributing
 

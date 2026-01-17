@@ -404,9 +404,9 @@ function generateSarifRules() {
       id: 'extraneous_package',
       name: 'ExtraneousPackage',
       shortDescription: { text: 'Package not in lockfile' },
-      fullDescription: { text: 'A package exists in node_modules but is not listed in the lockfile' },
+      fullDescription: { text: 'A package exists in node_modules but is not listed in the lockfile. Often a false positive when lockfile is not synced.' },
       helpUri: 'https://docs.npmjs.com/cli/v8/commands/npm-ci',
-      defaultConfiguration: { level: 'error' },
+      defaultConfiguration: { level: 'warning' },
     },
     {
       id: 'version_mismatch',

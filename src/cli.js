@@ -81,6 +81,7 @@ function parseArgs(argv) {
     showVersion: false,
     scanCode: false,
     checkTyposquatting: false,
+    checkLockfile: false,
     verbose: false,
     init: false,
     force: false,
@@ -163,6 +164,10 @@ function parseArgs(argv) {
 
       case '--check-typosquatting':
         args.checkTyposquatting = true;
+        break;
+
+      case '--check-lockfile':
+        args.checkLockfile = true;
         break;
 
       case '--verbose':

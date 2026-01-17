@@ -63,11 +63,11 @@ describe('analyzePackage', () => {
       relativePath: 'unknown-pkg',
     };
 
-    const issues = analyzePackage(pkg, lockIndexWithPackage, {});
+    const issues = analyzePackage(pkg, lockIndexWithPackage, { checkLockfile: true });
     const extraneousIssue = issues.find(i => i.reason === 'extraneous_package');
     
     assert.ok(extraneousIssue, 'Should detect extraneous package');
-    assert.strictEqual(extraneousIssue.severity, 'critical');
+    assert.strictEqual(extraneousIssue.severity, 'medium');
   });
 
   it('should detect version mismatch', () => {
@@ -79,7 +79,7 @@ describe('analyzePackage', () => {
       relativePath: 'test-pkg',
     };
 
-    const issues = analyzePackage(pkg, lockIndexWithPackage, {});
+    const issues = analyzePackage(pkg, lockIndexWithPackage, { checkLockfile: true });
     const mismatchIssue = issues.find(i => i.reason === 'version_mismatch');
     
     assert.ok(mismatchIssue, 'Should detect version mismatch');

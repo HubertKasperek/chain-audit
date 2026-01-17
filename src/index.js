@@ -224,6 +224,7 @@ ${color('OPTIONS:', colors.bold)}
                              (info|low|medium|high|critical)
   --scan-code                Scan JS files for suspicious patterns (slower)
   --check-typosquatting      Check for typosquatting attempts (disabled by default)
+  --check-lockfile           Check lockfile integrity (disabled by default due to false positives)
   -V, --verbose              Show detailed analysis for each finding:
                              • Code snippets with line numbers
                              • Matched patterns and evidence
