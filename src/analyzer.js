@@ -6,16 +6,12 @@ const path = require('path');
 // ==================== Detection Patterns ====================
 
 /**
- * Install lifecycle scripts that run automatically
+ * Install lifecycle scripts that run automatically during package installation
  */
 const INSTALL_SCRIPT_NAMES = new Set([
   'preinstall',
   'install', 
   'postinstall',
-  'prepare',
-  'prepack',
-  'prepublish',
-  'prepublishOnly',
 ]);
 
 /**
