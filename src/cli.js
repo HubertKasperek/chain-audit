@@ -80,6 +80,7 @@ function parseArgs(argv) {
     help: false,
     showVersion: false,
     scanCode: false,
+    checkTyposquatting: false,
     verbose: false,
     init: false,
     force: false,
@@ -158,6 +159,10 @@ function parseArgs(argv) {
 
       case '--scan-code':
         args.scanCode = true;
+        break;
+
+      case '--check-typosquatting':
+        args.checkTyposquatting = true;
         break;
 
       case '--verbose':

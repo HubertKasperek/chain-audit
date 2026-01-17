@@ -238,8 +238,10 @@ function analyzePackage(pkg, lockIndex, config = {}) {
   // 4. Check for native binaries
   checkNativeBinaries(pkg, issues, verbose);
 
-  // 5. Check for typosquatting
-  checkTyposquatting(pkg, issues, verbose);
+  // 5. Check for typosquatting (optional, enabled with --check-typosquatting)
+  if (config.checkTyposquatting) {
+    checkTyposquatting(pkg, issues, verbose);
+  }
 
   // 6. Check metadata anomalies
   checkMetadataAnomalies(pkg, issues, verbose);
@@ -455,10 +457,18 @@ function analyzeScripts(pkg, config, issues, verbose = false) {
     const hasTrustedPattern = Object.keys(trustedPatterns).some(
       pattern => script.includes(pattern)
     );
+    
+    // Additional context: check if script is just calling npm/node commands (less suspicious)
+    const isSimpleNpmCommand = /^(npm|yarn|pnpm|bun)\s+(run|test|start|build|install|ci)/i.test(script.trim());
 
     if (isInstallLifecycle) {
       // Flag all install scripts (medium baseline)
-      const baseSeverity = isTrusted ? 'info' : (hasTrustedPattern ? 'low' : 'medium');
+      // Reduce severity if it's just a simple npm command or has trusted patterns
+      let baseSeverity = isTrusted ? 'info' : (hasTrustedPattern ? 'low' : 'medium');
+      if (isSimpleNpmCommand && !isTrusted && !hasTrustedPattern) {
+        baseSeverity = 'low'; // Simple npm commands in install scripts are less suspicious
+      }
+      
       const issue = {
         severity: baseSeverity,
         reason: 'install_script',
@@ -479,6 +489,7 @@ function analyzeScripts(pkg, config, issues, verbose = false) {
           falsePositiveHints: [
             isTrusted ? '✓ Package is in trusted packages list' : null,
             hasTrustedPattern ? '✓ Script contains trusted pattern' : null,
+            isSimpleNpmCommand ? '✓ Script is a simple npm command (less suspicious)' : null,
             'Common install scripts include: node-gyp rebuild, prebuild-install, husky install',
             'Check if script just compiles native addons or sets up git hooks',
           ].filter(Boolean),
@@ -502,12 +513,23 @@ function analyzeScripts(pkg, config, issues, verbose = false) {
 function analyzeScriptContent(script, scriptName, isInstall, isTrusted, issues, verbose = false, pkg = null) {
   // script analysis uses regex patterns directly, no need for lowercase
 
-  // Network access
+  // Network access - reduce false positives for build/test scripts
   for (const pattern of NETWORK_PATTERNS) {
     const match = script.match(pattern);
     if (match) {
+      // Check if it's a build/test script (less suspicious)
+      const isBuildOrTestScript = /^(build|test|test:.*|build:.*|compile|transpile|prepublish|prepublishOnly)$/i.test(scriptName);
+      
+      // Only flag build/test scripts if they're install scripts or have suspicious patterns
+      if (isBuildOrTestScript && !isInstall) {
+        // Skip - build scripts often download dependencies or assets legitimately
+        continue;
+      }
+      
+      const severity = isInstall ? (isTrusted ? 'low' : 'high') : (isBuildOrTestScript ? 'low' : 'medium');
+      
       const issue = {
-        severity: isInstall ? (isTrusted ? 'low' : 'high') : 'medium',
+        severity,
         reason: 'network_access_script',
         detail: `Script "${scriptName}" contains network access pattern: ${truncate(script, 150)}`,
         recommendation: 'Verify that network access is legitimate and from trusted sources.',
@@ -520,10 +542,12 @@ function analyzeScriptContent(script, scriptName, isInstall, isTrusted, issues, 
             matchedText: match[0],
             scriptName,
             isInstallScript: isInstall,
+            isBuildOrTestScript,
           },
           fullScript: script,
           scriptFile: pkg ? path.join(pkg.dir, 'package.json') : null,
           falsePositiveHints: [
+            isBuildOrTestScript && !isInstall ? '✓ Build/test scripts often download dependencies legitimately' : null,
             'Legitimate uses: downloading prebuilt binaries (node-gyp, prebuild)',
             'Check if URL points to official package registry or CDN',
             match[0].includes('github.com') ? '⚠ Downloads from GitHub - verify repository' : null,
@@ -536,12 +560,23 @@ function analyzeScriptContent(script, scriptName, isInstall, isTrusted, issues, 
     }
   }
 
-  // Shell execution
+  // Shell execution - reduce false positives for build/test scripts
   for (const pattern of SHELL_EXEC_PATTERNS) {
     const match = script.match(pattern);
     if (match) {
+      // Check if it's a build/test script (less suspicious)
+      const isBuildOrTestScript = /^(build|test|test:.*|build:.*|compile|transpile|prepublish|prepublishOnly)$/i.test(scriptName);
+      
+      // Only flag build/test scripts if they're install scripts
+      if (isBuildOrTestScript && !isInstall) {
+        // Skip - build scripts often use shell wrappers for cross-platform compatibility
+        continue;
+      }
+      
+      const severity = isInstall ? 'high' : (isBuildOrTestScript ? 'low' : 'medium');
+      
       const issue = {
-        severity: isInstall ? 'high' : 'medium',
+        severity,
         reason: 'shell_execution',
         detail: `Script "${scriptName}" executes shell commands: ${truncate(script, 150)}`,
         recommendation: 'Review the shell commands being executed.',
@@ -553,13 +588,15 @@ function analyzeScriptContent(script, scriptName, isInstall, isTrusted, issues, 
             matchedPattern: pattern.source,
             matchedText: match[0],
             scriptName,
+            isBuildOrTestScript,
           },
           fullScript: script,
           scriptFile: pkg ? path.join(pkg.dir, 'package.json') : null,
           falsePositiveHints: [
+            isBuildOrTestScript && !isInstall ? '✓ Build/test scripts often use shell wrappers for cross-platform compatibility' : null,
             'Cross-platform scripts often use shell wrappers',
             'Check what command is being executed after shell invocation',
-          ],
+          ].filter(Boolean),
         };
       }
       
@@ -568,35 +605,69 @@ function analyzeScriptContent(script, scriptName, isInstall, isTrusted, issues, 
     }
   }
 
-  // Code execution
+  // Code execution - only flag if suspicious context
   for (const pattern of CODE_EXEC_PATTERNS) {
     const match = script.match(pattern);
     if (match) {
-      const issue = {
-        severity: isInstall ? 'high' : 'medium', 
-        reason: 'code_execution',
-        detail: `Script "${scriptName}" executes code dynamically: ${truncate(script, 150)}`,
-        recommendation: 'Investigate what code is being executed.',
-      };
+      // Skip false positives: standard npm/node commands that don't execute inline code
+      // Examples: "npm run build", "node script.js", "node index.mjs"
+      const isStandardCommand = /^(npm\s+(run|test|start|build|install|ci)|node\s+[^-\s]+\.(js|mjs|cjs)|node\s+[^-\s]+$)/i.test(script.trim());
       
-      if (verbose) {
-        issue.verbose = {
-          evidence: {
-            matchedPattern: pattern.source,
-            matchedText: match[0],
-            scriptName,
-          },
-          fullScript: script,
-          scriptFile: pkg ? path.join(pkg.dir, 'package.json') : null,
-          falsePositiveHints: [
-            'Some build tools use inline code execution',
-            'Check what code is being passed to the interpreter',
-          ],
+      // Check if code is passed inline (more suspicious) vs file execution (less suspicious)
+      // Look for quotes after the pattern (e.g., "node -e 'code here'")
+      const afterMatch = script.slice(match.index + match[0].length).trim();
+      const hasInlineCode = /^['"`]/.test(afterMatch) || /^\s*['"`]/.test(afterMatch);
+      
+      // Check if it's just a build/test script (less suspicious for non-install scripts)
+      const isBuildOrTestScript = /^(build|test|test:.*|build:.*|compile|transpile|lint|format)$/i.test(scriptName);
+      
+      // Only flag if:
+      // 1. It's an install script (always suspicious, even if standard command)
+      // 2. OR it's not a standard command AND has inline code
+      const shouldFlag = isInstall || (!isStandardCommand && hasInlineCode);
+      
+      if (shouldFlag) {
+        // Reduce severity for build/test scripts that aren't install scripts
+        let severity = isInstall ? 'high' : (hasInlineCode ? 'medium' : 'low');
+        if (!isInstall && isBuildOrTestScript && !hasInlineCode) {
+          severity = 'low';
+        }
+        
+        const issue = {
+          severity,
+          reason: 'code_execution',
+          detail: `Script "${scriptName}" executes code dynamically: ${truncate(script, 150)}`,
+          recommendation: hasInlineCode 
+            ? 'Inline code execution is risky. Investigate what code is being executed.'
+            : 'Investigate what code is being executed.',
         };
+        
+        if (verbose) {
+          issue.verbose = {
+            evidence: {
+              matchedPattern: pattern.source,
+              matchedText: match[0],
+              scriptName,
+              hasInlineCode,
+              isStandardCommand,
+              isBuildOrTestScript,
+              isInstallScript: isInstall,
+            },
+            fullScript: script,
+            scriptFile: pkg ? path.join(pkg.dir, 'package.json') : null,
+            falsePositiveHints: [
+              isStandardCommand && !isInstall ? '✓ This appears to be a standard npm/node command' : null,
+              isBuildOrTestScript && !isInstall ? '✓ Build/test scripts commonly use code execution' : null,
+              !hasInlineCode ? '✓ Code execution from file is less suspicious than inline' : '⚠ Inline code execution is more suspicious',
+              isInstall ? '⚠ Code execution in install scripts is always suspicious' : null,
+              'Check what code is being passed to the interpreter',
+            ].filter(Boolean),
+          };
+        }
+        
+        issues.push(issue);
+        break;
       }
-      
-      issues.push(issue);
-      break;
     }
   }
 
@@ -917,6 +988,7 @@ function checkSuspiciousNamePatterns(pkg, pkgName, issues, verbose = false) {
     // Prepending common words to popular package names
     { pattern: /^(get|my|the|fake|real|true|best|free|super|ultra)-?(.+)$/i, group: 2 },
     // Numbers that look like letter substitution (l00dash, r3act)
+    // Only check if there are multiple substitutions (more suspicious)
     { pattern: /[0-9]/, check: 'substitution' },
   ];
 
@@ -931,7 +1003,18 @@ function checkSuspiciousNamePatterns(pkg, pkgName, issues, verbose = false) {
         .replace(/5/g, 's')
         .replace(/7/g, 't');
       
-      if (normalized !== pkgName && POPULAR_PACKAGES.includes(normalized.toLowerCase())) {
+      // Only flag if:
+      // 1. Normalized name matches popular package
+      // 2. AND there are at least 2 character substitutions (single number could be version)
+      // 3. AND the substitutions are in suspicious positions (not just version numbers at end)
+      const substitutionCount = (pkgName.match(/[013457]/g) || []).length;
+      const hasVersionSuffix = /[0-9]+$/.test(pkgName);
+      const substitutionsInMiddle = pkgName.slice(0, -2).match(/[013457]/g);
+      
+      if (normalized !== pkgName && 
+          POPULAR_PACKAGES.includes(normalized.toLowerCase()) &&
+          substitutionCount >= 2 &&
+          (!hasVersionSuffix || (substitutionsInMiddle && substitutionsInMiddle.length >= 2))) {
         const issue = {
           severity: 'high',
           reason: 'suspicious_name_pattern',
@@ -970,7 +1053,12 @@ function checkSuspiciousNamePatterns(pkg, pkgName, issues, verbose = false) {
       const match = pkgName.match(pattern);
       if (match && match[group]) {
         const stripped = match[group].toLowerCase();
-        if (POPULAR_PACKAGES.includes(stripped)) {
+        const prefix = match[1]?.toLowerCase();
+        
+        // Skip common legitimate prefixes
+        const legitimatePrefixes = ['my', 'get', 'is', 'has', 'can', 'should', 'will', 'do'];
+        
+        if (POPULAR_PACKAGES.includes(stripped) && !legitimatePrefixes.includes(prefix)) {
           const issue = {
             severity: 'medium',
             reason: 'suspicious_name_pattern',
@@ -1086,9 +1174,43 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       const content = fs.readFileSync(filePath, 'utf8');
       const relativePath = path.relative(pkg.dir, filePath);
 
-      // Check for eval patterns
+      // Check for eval patterns - reduce false positives
       for (const pattern of EVAL_PATTERNS) {
         if (pattern.test(content)) {
+          // Skip if it's in a test directory (tests often use eval for mocking)
+          const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
+          
+          // Skip minified/bundled files (dist/*.min.js, dist/*.bundle.js, etc.)
+          const isMinifiedOrBundled = /\.(?:min|bundle|dist)\.(?:js|mjs|cjs)$/i.test(relativePath) ||
+                                     /(?:^|\/)(?:dist|build|lib)\/.*\.(?:min|bundle)\.(?:js|mjs|cjs)$/i.test(relativePath);
+          
+          // Skip if it's a template engine or known legitimate use case
+          const isTemplateEngine = /(?:template|render|compile|parse|eval)/i.test(relativePath) ||
+                                  /(?:handlebars|mustache|ejs|pug|jade|nunjucks)/i.test(pkg?.name || '');
+          
+          // Skip if it's clearly a JSON parser or polyfill
+          const isJsonParser = /(?:json|parse|polyfill)/i.test(relativePath) ||
+                              /(?:json[_-]?parse|polyfill)/i.test(pkg?.name || '');
+          
+          // Skip ESLint and related packages (eval is normal for rule evaluation)
+          // IMPORTANT: Use exact matches or trusted scopes to avoid missing typosquatting attacks
+          const isEslintRelated = pkg && (
+            pkg.name === 'eslint' ||
+            pkg.name === 'eslint-scope' ||
+            pkg.name.startsWith('@eslint/') ||
+            pkg.name.startsWith('@humanwhocodes/')
+          );
+          
+          // Skip known utility packages that legitimately use eval
+          const KNOWN_LEGITIMATE_EVAL = new Set([
+            'lodash.merge', 'lodash', 'underscore', // Merge utilities may use eval for deep merging
+          ]);
+          const isKnownLegitimate = pkg && KNOWN_LEGITIMATE_EVAL.has(pkg.name);
+          
+          if (isTestFile || isMinifiedOrBundled || isTemplateEngine || isJsonParser || isEslintRelated || isKnownLegitimate) {
+            continue;
+          }
+          
           const issue = {
             severity: 'high',
             reason: 'eval_usage',
@@ -1107,15 +1229,24 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 pattern: pattern.source,
                 matchCount: allMatches.length,
                 matches: allMatches,
+                isTestFile,
+                isTemplateEngine,
+                isJsonParser,
               },
               codeSnippet: snippet?.snippet || null,
               lineNumber: snippet?.lineNumber || null,
               matchedText: snippet?.matchedText || null,
               falsePositiveHints: [
+                isTestFile ? '✓ This appears to be a test file - eval usage for mocking is common' : null,
+                isMinifiedOrBundled ? '✓ This appears to be a minified/bundled file - eval patterns may be false positives' : null,
+                isEslintRelated ? '✓ ESLint packages use eval for rule evaluation - this is normal' : null,
+                isKnownLegitimate ? '✓ This is a known legitimate package that uses eval' : null,
+                isTemplateEngine ? '✓ This appears to be a template engine - eval usage is expected' : null,
+                isJsonParser ? '✓ This appears to be a JSON parser - eval usage for fallback is common' : null,
                 'Some legitimate uses: JSON parsing fallbacks, template engines',
                 'Check if eval is used on user-controlled input',
                 'vm module usage may be legitimate for sandboxing',
-              ],
+              ].filter(Boolean),
             };
           }
           
@@ -1124,9 +1255,38 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         }
       }
 
-      // Check for child_process
+      // Check for child_process - reduce false positives for build tools
       for (const pattern of CHILD_PROCESS_PATTERNS) {
         if (pattern.test(content)) {
+          // Known legitimate build tools and utilities (whitelist approach is safer than regex)
+          const KNOWN_BUILD_TOOLS = new Set([
+            'webpack', 'rollup', 'vite', 'esbuild', 'babel', 'typescript', 'tsc', 'swc', 
+            'terser', 'uglify', 'parcel', 'snowpack', 'turbo', 'nx', 'rush', 'lerna',
+            'jest', 'mocha', 'ava', 'vitest', 'karma', 'jasmine', 'cypress', 'playwright',
+            'eslint', 'prettier', 'stylelint', 'postcss', 'sass', 'less', 'stylus',
+            'gulp', 'grunt', 'broccoli', 'brunch', 'fusebox', 'polymer-bundler',
+            // Known utility packages that legitimately use child_process
+            'chalk', 'cross-spawn', 'fs.realpath', 'is-extglob', 'keyv', 'lodash.merge',
+            'ms', 'path-is-absolute', 'text-table', 'which', 'execa', 'shelljs',
+            '@eslint-community/eslint-utils', '@humanwhocodes/config-array',
+          ]);
+          
+          // Skip if it's in a build/dist directory or looks like a build tool
+          const isBuildFile = /(?:^|\/)(?:build|dist|lib|bin|scripts?|tools?|cli)(?:\/|$)/i.test(relativePath) ||
+                             /\.(?:config|webpack|rollup|vite|esbuild)\./i.test(relativePath);
+          
+          // Skip if package name is a known build tool
+          const isBuildTool = pkg && (KNOWN_BUILD_TOOLS.has(pkg.name.toLowerCase()) ||
+                                     pkg.name.toLowerCase().startsWith('@babel/') ||
+                                     pkg.name.toLowerCase().startsWith('@webpack/') ||
+                                     pkg.name.toLowerCase().startsWith('@rollup/') ||
+                                     pkg.name.toLowerCase().startsWith('@eslint/'));
+          
+          if (isBuildFile || isBuildTool) {
+            // Build tools legitimately use child_process - skip to reduce false positives
+            continue;
+          }
+          
           const issue = {
             severity: 'medium',
             reason: 'child_process_usage',
@@ -1145,15 +1305,19 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 pattern: pattern.source,
                 matchCount: allMatches.length,
                 matches: allMatches,
+                isBuildFile,
+                isBuildTool,
               },
               codeSnippet: snippet?.snippet || null,
               lineNumber: snippet?.lineNumber || null,
               matchedText: snippet?.matchedText || null,
               falsePositiveHints: [
+                isBuildFile ? '✓ This appears to be a build file - child_process usage is common' : null,
+                isBuildTool ? '✓ This appears to be a build tool - child_process usage is expected' : null,
                 'Build tools commonly use child_process (webpack, babel plugins)',
                 'CLI tools often spawn child processes',
                 'Check what commands are being executed',
-              ],
+              ].filter(Boolean),
             };
           }
           
@@ -1203,50 +1367,89 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       }
 
       // Check for Node.js network patterns (like Shai-Hulud 2.0 attack)
-      for (const pattern of NODE_NETWORK_PATTERNS) {
-        if (pattern.test(content)) {
-          const issue = {
-            severity: 'medium',
-            reason: 'node_network_access',
-            detail: `File "${relativePath}" uses Node.js network APIs (${pattern.source})`,
-            recommendation: 'Network access in dependencies should be reviewed for legitimacy.',
-          };
-          
-          if (verbose) {
-            const snippet = extractCodeSnippet(content, pattern, 3);
-            const allMatches = findAllMatches(content, pattern, 5);
+      // Skip if package is clearly an HTTP client library or network-related utility
+      const isHttpClient = pkg && /^(axios|got|node-fetch|undici|ky|superagent|request|needle|phin|bent|httpie|type-check)/i.test(pkg.name);
+      
+      // Skip WebSocket-related packages (ws, uri-js for ws:// URLs, etc.)
+      const isWebSocketRelated = pkg && (
+        /^(ws|websocket|socket\.io|uri-js)/i.test(pkg.name) ||
+        /(?:websocket|ws|wss)/i.test(relativePath)
+      );
+      
+      if (!isHttpClient && !isWebSocketRelated) {
+        for (const pattern of NODE_NETWORK_PATTERNS) {
+          if (pattern.test(content)) {
+            // Skip if it's in a test directory (tests often mock network calls)
+            const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
             
-            issue.verbose = {
-              evidence: {
-                file: filePath,
-                relativePath,
-                pattern: pattern.source,
-                matchCount: allMatches.length,
-                matches: allMatches,
-              },
-              codeSnippet: snippet?.snippet || null,
-              lineNumber: snippet?.lineNumber || null,
-              matchedText: snippet?.matchedText || null,
-              falsePositiveHints: [
-                'HTTP client libraries (axios, got, fetch) are common',
-                'Check what URLs/endpoints are being accessed',
-                'Verify network calls match package purpose',
-              ],
+            if (isTestFile) {
+              continue;
+            }
+            
+            const issue = {
+              severity: 'medium',
+              reason: 'node_network_access',
+              detail: `File "${relativePath}" uses Node.js network APIs (${pattern.source})`,
+              recommendation: 'Network access in dependencies should be reviewed for legitimacy.',
             };
+            
+            if (verbose) {
+              const snippet = extractCodeSnippet(content, pattern, 3);
+              const allMatches = findAllMatches(content, pattern, 5);
+              
+              issue.verbose = {
+                evidence: {
+                  file: filePath,
+                  relativePath,
+                  pattern: pattern.source,
+                  matchCount: allMatches.length,
+                  matches: allMatches,
+                  isTestFile,
+                },
+                codeSnippet: snippet?.snippet || null,
+                lineNumber: snippet?.lineNumber || null,
+                matchedText: snippet?.matchedText || null,
+                falsePositiveHints: [
+                  isTestFile ? '✓ This appears to be a test file - network mocking is common' : null,
+                  'HTTP client libraries (axios, got, fetch) are common',
+                  'Check what URLs/endpoints are being accessed',
+                  'Verify network calls match package purpose',
+                ].filter(Boolean),
+              };
+            }
+            
+            issues.push(issue);
+            break;
           }
-          
-          issues.push(issue);
-          break;
         }
       }
 
       // Check for env var access (in context)
       const envMatch = ENV_ACCESS_PATTERNS.find(p => p.test(content));
       if (envMatch) {
+        // Skip known legitimate packages that use env vars (ESLint, config loaders, etc.)
+        // IMPORTANT: Use exact matches or trusted scopes to avoid missing typosquatting attacks
+        const isKnownLegitimateEnv = pkg && (
+          // Only official ESLint packages (exact match or trusted scopes)
+          pkg.name === 'eslint' ||
+          pkg.name.startsWith('@eslint/') ||
+          pkg.name.startsWith('@humanwhocodes/') ||
+          // Config/environment utilities (exact matches only)
+          pkg.name === 'fs.realpath' || // Old package, likely false positive
+          pkg.name === 'dotenv' ||
+          pkg.name === 'cross-env' ||
+          pkg.name === '@types/node' // Type definitions
+        );
+        
         // Only flag if also has network patterns or child_process
         const networkMatch = NETWORK_PATTERNS.find(p => p.test(content));
         const nodeNetworkMatch = NODE_NETWORK_PATTERNS.find(p => p.test(content));
         const childProcessMatch = CHILD_PROCESS_PATTERNS.find(p => p.test(content));
+        
+        // Skip if it's a known legitimate package
+        if (isKnownLegitimateEnv) {
+          continue;
+        }
         
         if (networkMatch || nodeNetworkMatch || childProcessMatch) {
           const issue = {
@@ -1291,40 +1494,74 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         }
       }
 
-      // Check for obfuscation
-      for (const pattern of OBFUSCATION_PATTERNS) {
-        if (pattern.test(content)) {
-          const issue = {
-            severity: 'critical',
-            reason: 'obfuscated_code',
-            detail: `File "${relativePath}" appears to contain obfuscated code`,
-            recommendation: 'DANGER: Obfuscated code is highly suspicious. Investigate immediately.',
-          };
-          
-          if (verbose) {
-            const snippet = extractCodeSnippet(content, pattern, 3);
-            const match = content.match(pattern);
+      // Check for obfuscation - distinguish between minified and obfuscated
+      const isMinifiedFile = /\.min\.(js|mjs|cjs)$/i.test(relativePath) ||
+                            /(?:^|\/)(?:dist|build|lib|min|compiled)(?:\/|$)/i.test(relativePath);
+      
+      // Skip if it's clearly a minified or build output file
+      if (!isMinifiedFile) {
+        for (const pattern of OBFUSCATION_PATTERNS) {
+          if (pattern.test(content)) {
+            // Distinguish minified from obfuscated:
+            // Minified: short variable names, no whitespace, but readable structure (functions, if/else visible)
+            // Obfuscated: base64 strings, hex escapes, char codes, unreadable structure
             
-            issue.verbose = {
-              evidence: {
-                file: filePath,
-                relativePath,
-                obfuscationType: getObfuscationType(pattern),
-                sampleMatch: match ? truncate(match[0], 100) : null,
-              },
-              codeSnippet: snippet?.snippet || null,
-              lineNumber: snippet?.lineNumber || null,
-              falsePositiveHints: [
-                'Minified code may trigger this - check if it\'s build output',
-                'Base64 encoded assets (images, fonts) are usually safe',
-                'Check if obfuscation is consistent with package purpose',
-              ],
-              riskAssessment: 'CRITICAL - Obfuscated code in packages is highly unusual',
+            // Check if it's likely minified (has readable structure despite compression)
+            const hasReadableStructure = /function\s+\w+|if\s*\(|for\s*\(|while\s*\(|return\s+/.test(content);
+            const hasMinifiedPattern = content.length < 50000 && 
+                                     content.split('\n').length < 100 &&
+                                     /^[a-zA-Z0-9+/=]{100,}$/.test(content.slice(0, 200));
+            
+            // If it has readable structure, it's likely minified, not obfuscated
+            const isLikelyMinified = hasMinifiedPattern && hasReadableStructure;
+            
+            if (isLikelyMinified) {
+              continue; // Skip minified files (they have readable structure)
+            }
+            
+            // Additional check: very long base64 strings (>500 chars) are more suspicious
+            // Short base64 might be assets (images, fonts)
+            const longBase64Match = content.match(/['"`][A-Za-z0-9+/=]{500,}['"`]/);
+            if (pattern.source.includes('base64') && !longBase64Match) {
+              continue; // Skip short base64 (likely assets)
+            }
+            
+            const issue = {
+              severity: 'critical',
+              reason: 'obfuscated_code',
+              detail: `File "${relativePath}" appears to contain obfuscated code`,
+              recommendation: 'DANGER: Obfuscated code is highly suspicious. Investigate immediately.',
             };
+            
+            if (verbose) {
+              const snippet = extractCodeSnippet(content, pattern, 3);
+              const match = content.match(pattern);
+              
+              issue.verbose = {
+                evidence: {
+                  file: filePath,
+                  relativePath,
+                  obfuscationType: getObfuscationType(pattern),
+                  sampleMatch: match ? truncate(match[0], 100) : null,
+                  isMinifiedFile,
+                  isLikelyMinified: isLikelyMinified,
+                },
+                codeSnippet: snippet?.snippet || null,
+                lineNumber: snippet?.lineNumber || null,
+                falsePositiveHints: [
+                  isMinifiedFile ? '✓ This appears to be a minified file - obfuscation patterns are expected' : null,
+                  isLikelyMinified ? '✓ This file appears to be minified - skipping' : null,
+                  'Minified code may trigger this - check if it\'s build output',
+                  'Base64 encoded assets (images, fonts) are usually safe',
+                  'Check if obfuscation is consistent with package purpose',
+                ].filter(Boolean),
+                riskAssessment: 'CRITICAL - Obfuscated code in packages is highly unusual',
+              };
+            }
+            
+            issues.push(issue);
+            break;
           }
-          
-          issues.push(issue);
-          break;
         }
       }
 

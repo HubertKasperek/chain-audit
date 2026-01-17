@@ -13,6 +13,7 @@ const DEFAULT_CONFIG = {
   ignoredPackages: [],
   ignoredRules: [],
   scanCode: false,
+  checkTyposquatting: false,  // Typosquatting detection (disabled by default due to false positives)
   failOn: null,
   severity: null,      // Array of severity levels to show (e.g., ['critical', 'high'])
   format: 'text',      // Output format: 'text', 'json', 'sarif'
@@ -114,6 +115,9 @@ function validateConfig(config) {
   if (config.scanCode !== undefined && typeof config.scanCode !== 'boolean') {
     throw new Error('Config: scanCode must be a boolean');
   }
+  if (config.checkTyposquatting !== undefined && typeof config.checkTyposquatting !== 'boolean') {
+    throw new Error('Config: checkTyposquatting must be a boolean');
+  }
   if (config.severity !== undefined) {
     if (!Array.isArray(config.severity)) {
       throw new Error('Config: severity must be an array of severity levels');
@@ -179,6 +183,9 @@ function mergeConfig(fileConfig, cliArgs) {
   if (fileConfig.scanCode !== undefined) {
     config.scanCode = fileConfig.scanCode;
   }
+  if (fileConfig.checkTyposquatting !== undefined) {
+    config.checkTyposquatting = fileConfig.checkTyposquatting;
+  }
   if (fileConfig.maxFileSizeForCodeScan !== undefined) {
     config.maxFileSizeForCodeScan = fileConfig.maxFileSizeForCodeScan;
   }
@@ -217,6 +224,9 @@ function mergeConfig(fileConfig, cliArgs) {
   }
   if (cliArgs.scanCode) {
     config.scanCode = true;
+  }
+  if (cliArgs.checkTyposquatting) {
+    config.checkTyposquatting = true;
   }
   if (cliArgs.severityFilter) {
     config.severityFilter = cliArgs.severityFilter;
@@ -274,6 +284,7 @@ function generateExampleConfig() {
       "custom-build-script": true
     },
     scanCode: false,
+    checkTyposquatting: false,
     failOn: "high",
     severity: ["critical", "high", "medium"],
     format: "text",

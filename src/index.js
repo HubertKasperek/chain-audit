@@ -223,6 +223,7 @@ ${color('OPTIONS:', colors.bold)}
   --fail-on <level>          Exit 1 when max severity >= level
                              (info|low|medium|high|critical)
   --scan-code                Scan JS files for suspicious patterns (slower)
+  --check-typosquatting      Check for typosquatting attempts (disabled by default)
   -V, --verbose              Show detailed analysis for each finding:
                              • Code snippets with line numbers
                              • Matched patterns and evidence
@@ -248,6 +249,7 @@ ${color('SCAN OPTIONS:', colors.bold)}
   --max-depth <n>            Max nested node_modules depth (default: 10)
   --max-files <n>            Max JS files to scan per package (0 = unlimited)
   --verify-integrity         Additional checks for package structure tampering
+  --check-typosquatting      Enable typosquatting detection (disabled by default)
 
 ${color('SEVERITY LEVELS:', colors.bold)}
   critical  Highly likely malicious (e.g., obfuscated code + network access)

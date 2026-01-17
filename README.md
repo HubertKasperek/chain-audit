@@ -20,7 +20,7 @@ Scans your installed dependencies for malicious patterns including:
 - 🔴 Version mismatches vs lockfile
 - 🔴 Malicious install scripts (preinstall, postinstall, etc.)
 - 🔴 Network access patterns (curl, wget, fetch, Node.js http/https)
-- 🔴 Typosquatting attempts
+- 🔴 Typosquatting attempts (optional, use `--check-typosquatting`)
 - 🔴 Obfuscated code (base64, hex encoding)
 - 🔴 Credential/secret stealing patterns (env vars + network)
 - 🟡 Native binary modules
@@ -124,6 +124,9 @@ chain-audit --scan-code --max-files 0 --verbose
 
 # Custom scan limits
 chain-audit --max-file-size 2097152 --max-depth 15
+
+# Enable typosquatting detection (disabled by default)
+chain-audit --check-typosquatting
 ```
 
 ## CLI Options
@@ -152,6 +155,7 @@ chain-audit --max-file-size 2097152 --max-depth 15
 | `--max-depth <n>` | Max nested node_modules depth (default: 10) |
 | `--max-files <n>` | Max JS files to scan per package (0 = unlimited, default: 0) |
 | `--verify-integrity` | Additional checks for package structure tampering |
+| `--check-typosquatting` | Enable typosquatting detection (disabled by default) |
 
 ## Severity Levels
 
@@ -317,6 +321,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
     "prebuild-install": true
   },
   "scanCode": false,
+  "checkTyposquatting": false,
   "failOn": "high",
   "severity": ["critical", "high"],
   "format": "text",
@@ -337,6 +342,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `trustedPackages` | `string[]` | `[esbuild, sharp, ...]` | Packages with reduced severity for install scripts |
 | `trustedPatterns` | `object` | `{node-gyp rebuild: true, ...}` | Install script patterns considered safe |
 | `scanCode` | `boolean` | `false` | Enable deep code scanning by default |
+| `checkTyposquatting` | `boolean` | `false` | Enable typosquatting detection (disabled by default to reduce false positives) |
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
 | `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
@@ -508,8 +514,8 @@ chain-audit automatically detects and parses:
 
 ### High Severity
 - **network_access_script** – Install script with curl/wget/fetch patterns
-- **potential_typosquat** – Package name similar to popular package
-- **suspicious_name_pattern** – Package name uses character substitution (l33t speak)
+- **potential_typosquat** – Package name similar to popular package (requires `--check-typosquatting`)
+- **suspicious_name_pattern** – Package name uses character substitution (l33t speak) (requires `--check-typosquatting`)
 - **eval_usage** – Code uses eval() or new Function()
 - **sensitive_path_access** – Code accesses ~/.ssh, ~/.aws, etc.
 - **shell_execution** – Script executes shell commands
