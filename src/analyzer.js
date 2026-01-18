@@ -1501,7 +1501,7 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
     // Regex starts after: =, (, [, {, ,, ;, :, !, &, |, ?, ~, +, -, *, /, %, ^, <, >, space, tab, newline
     if (char === '/') {
       const beforeSlash = contentBeforeMatch.slice(Math.max(0, i - 10), i);
-      const regexStartContext = /[=(\[{,;:!&|?~+\-*/%^<> \t\n]$/.test(beforeSlash.slice(-1));
+      const regexStartContext = /[=([{,;:!&|?~+\-*/%^<> \t\n]$/.test(beforeSlash.slice(-1));
       if (regexStartContext || i === 0) {
         lastSlashIndex = i;
         break;
