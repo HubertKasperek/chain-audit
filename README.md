@@ -9,10 +9,6 @@
 
 📖 **[Documentation](https://github.com/hukasx0/chain-audit)** • 🐛 **[Report Bug](https://github.com/hukasx0/chain-audit/issues)** • 💡 **[Request Feature](https://github.com/hukasx0/chain-audit/issues)** • 📦 **[npm package](https://www.npmjs.com/package/chain-audit)**
 
-> ⚠️ Supply chain attacks are on the rise. Incidents like [event-stream](https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident), [ua-parser-js](https://github.com/advisories/GHSA-pjwm-rvh2-c87w), [node-ipc](https://snyk.io/blog/peacenotwar-malicious-npm-node-ipc-package-vulnerability/), and [Shai-Hulud 2.0](https://www.wiz.io/blog/shai-hulud-2-0-aftermath-ongoing-supply-chain-attack) (November 2025 – compromised PostHog, Postman, AsyncAPI and leaked thousands of secrets) have shown that even popular packages can be compromised. **`npm audit` only detects known CVEs** – it won't catch a malicious postinstall script added yesterday.
-
-**chain-audit** fills this gap by scanning for suspicious patterns that indicate an active attack, not just known vulnerabilities.
-
 ---
 
 Scans your installed dependencies for malicious patterns including:
@@ -351,7 +347,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
 | `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
-| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores<br>(Note: CLI flag is `--detailed`, but config uses `verbose` for consistency) |
+| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores (Note: CLI flag is `--detailed`, but config uses `verbose` for consistency) |
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
 | `maxFilesPerPackage` | `number` | `0` | Max JS files to scan per package (0 = unlimited) |
