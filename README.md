@@ -7,20 +7,7 @@
 
 **Fast, zero-dependency CLI to detect supply chain attacks in `node_modules`.**
 
-📖 **[Documentation](https://github.com/hukasx0/chain-audit)** • 🐛 **[Report Bug](https://github.com/hukasx0/chain-audit/issues)** • 💡 **[Request Feature](https://github.com/hukasx0/chain-audit/issues)** • 📦 **[npm package](https://www.npmjs.com/package/chain-audit)**
-
 ---
-
-Scans your installed dependencies for malicious patterns including:
-- 🔴 Extraneous packages not in lockfile
-- 🔴 Version mismatches vs lockfile
-- 🔴 Malicious install scripts (preinstall, postinstall, etc.)
-- 🔴 Network access patterns (curl, wget, fetch, Node.js http/https)
-- 🔴 Typosquatting attempts (optional, use `--check-typosquatting`)
-- 🔴 Obfuscated code (base64, hex encoding)
-- 🔴 Credential/secret stealing patterns (env vars + network)
-- 🟡 Native binary modules
-- 🟡 Dynamic code execution (eval, Function, child_process)
 
 ## Why chain-audit?
 
@@ -459,15 +446,15 @@ The reusable workflow automatically uses `--ignore-scripts` for safe installatio
     done
 ```
 
-### ⚠️ CI/CD Security Best Practices
+### CI/CD Security Best Practices
 
 Supply chain attacks like [Shai-Hulud 2.0](https://www.wiz.io/blog/shai-hulud-2-0-aftermath-ongoing-supply-chain-attack) exploited misconfigured GitHub Actions. **Protect your CI/CD:**
 
 ```yaml
-# ❌ DANGEROUS - Don't use pull_request_target with checkout
+# DANGEROUS - Don't use pull_request_target with checkout
 on: pull_request_target  # Gives write access + secrets to fork PRs!
 
-# ✅ SAFE - Use pull_request (no secrets exposed to forks)
+# SAFE - Use pull_request (no secrets exposed to forks)
 on: pull_request
 ```
 
@@ -547,7 +534,7 @@ console.log(result.summary);   // { counts: {...}, maxSeverity: 'high' }
 
 ## Best Practices
 
-### ⚠️ Important: When to Run chain-audit
+### Important: When to Run chain-audit
 
 **Problem:** If you run chain-audit *after* `npm install`, malicious `postinstall` scripts have already executed – it's too late!
 
@@ -566,7 +553,7 @@ npm rebuild
 
 > 💡 **Note:** chain-audit analyzes scripts by reading them from `package.json` files (static analysis), not by executing them. This means it can detect malicious scripts even when using `--ignore-scripts`, because it reads the script content as text and checks for suspicious patterns
 
-> ⚠️ **Warning:** Even with `--ignore-scripts`, there is no 100% guarantee of security. Malicious code could execute when the package is `require()`d, or exploit vulnerabilities during extraction. For maximum security:
+> **Warning:** Even with `--ignore-scripts`, there is no 100% guarantee of security. Malicious code could execute when the package is `require()`d, or exploit vulnerabilities during extraction. For maximum security:
 > - Run installation in a **sandboxed environment**: Docker, Podman, or a VM (VirtualBox, VMware, QEMU/KVM)
 > - Use ephemeral CI runners (GitHub Actions, GitLab CI) that are destroyed after each run
 > - Never install untrusted packages on production or development machines directly
@@ -611,9 +598,9 @@ Hubert Kasperek
 
 ---
 
-**⚠️ Disclaimer:** chain-audit is a heuristic scanner created for **educational and research purposes**, provided "AS IS" without warranty of any kind. It may produce false positives and **cannot catch all attacks**. Even with `--ignore-scripts`, malicious packages could execute code on `require()` etc. 
+**Disclaimer:** chain-audit is a heuristic scanner created for **educational and research purposes**, provided "AS IS" without warranty of any kind. It may produce false positives and **cannot catch all attacks**.
 
-**The author(s) take no responsibility for:**
+**The author takes no responsibility for:**
 - False positives or false negatives in detection
 - Missed malicious packages or vulnerabilities
 - Any damages resulting from use or inability to use this tool
@@ -621,9 +608,3 @@ Hubert Kasperek
 - and more
 
 **By using chain-audit, you accept full responsibility for your actions and security decisions.**
-
-**Always:**
-- Install dependencies in isolated environments (Docker, VirtualBox, VMware, QEMU/KVM)
-- Review findings manually  
-- Use as part of a defense-in-depth security strategy
-- Never trust any single tool as your only line of defense
