@@ -156,7 +156,7 @@ chain-audit --check-typosquatting
 | `--max-files <n>` | Max JS files to scan per package (0 = unlimited, default: 0) |
 | `--verify-integrity` | Additional checks for package structure tampering |
 | `--check-typosquatting` | Enable typosquatting detection (disabled by default) |
-| `--check-lockfile` | Check lockfile integrity (disabled by default due to false positives) |
+| `--check-lockfile` | Check lockfile integrity (disabled by default due to possible false positives) |
 
 ## Severity Levels
 
