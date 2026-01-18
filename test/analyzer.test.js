@@ -63,11 +63,11 @@ describe('analyzePackage', () => {
       relativePath: 'unknown-pkg',
     };
 
-    const issues = analyzePackage(pkg, lockIndexWithPackage, {});
+    const issues = analyzePackage(pkg, lockIndexWithPackage, { checkLockfile: true });
     const extraneousIssue = issues.find(i => i.reason === 'extraneous_package');
     
     assert.ok(extraneousIssue, 'Should detect extraneous package');
-    assert.strictEqual(extraneousIssue.severity, 'critical');
+    assert.strictEqual(extraneousIssue.severity, 'medium');
   });
 
   it('should detect version mismatch', () => {
@@ -79,7 +79,7 @@ describe('analyzePackage', () => {
       relativePath: 'test-pkg',
     };
 
-    const issues = analyzePackage(pkg, lockIndexWithPackage, {});
+    const issues = analyzePackage(pkg, lockIndexWithPackage, { checkLockfile: true });
     const mismatchIssue = issues.find(i => i.reason === 'version_mismatch');
     
     assert.ok(mismatchIssue, 'Should detect version mismatch');
@@ -131,7 +131,7 @@ describe('typosquatting detection', () => {
     assert.ok(POPULAR_PACKAGES.includes('express'), 'Should include express');
   });
 
-  it('should detect typosquatting attempts', () => {
+  it('should detect typosquatting attempts when enabled', () => {
     const pkg = {
       name: 'lodahs', // Typo of lodash
       version: '1.0.0',
@@ -140,11 +140,17 @@ describe('typosquatting detection', () => {
       relativePath: 'lodahs',
     };
 
-    const issues = analyzePackage(pkg, { lockPresent: false }, {});
-    const typoIssue = issues.find(i => i.reason === 'potential_typosquat');
+    // Typosquatting is disabled by default
+    const issuesWithout = analyzePackage(pkg, { lockPresent: false }, {});
+    const typoIssueWithout = issuesWithout.find(i => i.reason === 'potential_typosquat');
+    assert.ok(!typoIssueWithout, 'Should not detect typosquatting by default');
+
+    // Enable typosquatting check
+    const issuesWith = analyzePackage(pkg, { lockPresent: false }, { checkTyposquatting: true });
+    const typoIssueWith = issuesWith.find(i => i.reason === 'potential_typosquat');
     
-    assert.ok(typoIssue, 'Should detect typosquatting');
-    assert.strictEqual(typoIssue.severity, 'high');
+    assert.ok(typoIssueWith, 'Should detect typosquatting when enabled');
+    assert.strictEqual(typoIssueWith.severity, 'high');
   });
 });
 

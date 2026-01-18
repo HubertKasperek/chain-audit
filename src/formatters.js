@@ -242,6 +242,15 @@ function formatText(issues, summary, context) {
     lines.push(`${color('Max severity:', colors.dim)} ${colorSeverity(summary.maxSeverity)}`);
   }
 
+  // Disclaimer
+  lines.push('');
+  lines.push(color('─'.repeat(60), colors.dim));
+  lines.push(color('⚠️  DISCLAIMER:', colors.yellow + colors.bold));
+  lines.push(color('This tool is provided "AS IS" without warranty. The author takes no', colors.dim));
+  lines.push(color('responsibility for false positives, false negatives, missed attacks, or', colors.dim));
+  lines.push(color('any damages resulting from use of this tool. Use at your own risk.', colors.dim));
+  lines.push(color('Always review findings manually and use as part of defense-in-depth.', colors.dim));
+
   // Footer with author and license
   lines.push('');
   lines.push(color('─'.repeat(60), colors.dim));
@@ -404,9 +413,9 @@ function generateSarifRules() {
       id: 'extraneous_package',
       name: 'ExtraneousPackage',
       shortDescription: { text: 'Package not in lockfile' },
-      fullDescription: { text: 'A package exists in node_modules but is not listed in the lockfile' },
+      fullDescription: { text: 'A package exists in node_modules but is not listed in the lockfile. Often a false positive when lockfile is not synced.' },
       helpUri: 'https://docs.npmjs.com/cli/v8/commands/npm-ci',
-      defaultConfiguration: { level: 'error' },
+      defaultConfiguration: { level: 'warning' },
     },
     {
       id: 'version_mismatch',

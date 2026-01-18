@@ -80,6 +80,8 @@ function parseArgs(argv) {
     help: false,
     showVersion: false,
     scanCode: false,
+    checkTyposquatting: false,
+    checkLockfile: false,
     verbose: false,
     init: false,
     force: false,
@@ -160,7 +162,16 @@ function parseArgs(argv) {
         args.scanCode = true;
         break;
 
-      case '--verbose':
+      case '--check-typosquatting':
+        args.checkTyposquatting = true;
+        break;
+
+      case '--check-lockfile':
+        args.checkLockfile = true;
+        break;
+
+      case '--detailed':
+      case '--verbose': // Alias for backward compatibility
       case '-V':
         args.verbose = true;
         break;
@@ -248,8 +259,9 @@ function parseArgs(argv) {
 
       default:
         if (arg.startsWith('-')) {
-          console.warn(`Warning: Unknown flag "${arg}" - ignoring`);
+          throw new Error(`Unknown flag: "${arg}". Use --help to see available options.`);
         }
+        break;
     }
   }
 

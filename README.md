@@ -9,10 +9,6 @@
 
 📖 **[Documentation](https://github.com/hukasx0/chain-audit)** • 🐛 **[Report Bug](https://github.com/hukasx0/chain-audit/issues)** • 💡 **[Request Feature](https://github.com/hukasx0/chain-audit/issues)** • 📦 **[npm package](https://www.npmjs.com/package/chain-audit)**
 
-> ⚠️ Supply chain attacks are on the rise. Incidents like [event-stream](https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident), [ua-parser-js](https://github.com/advisories/GHSA-pjwm-rvh2-c87w), [node-ipc](https://snyk.io/blog/peacenotwar-malicious-npm-node-ipc-package-vulnerability/), and [Shai-Hulud 2.0](https://www.wiz.io/blog/shai-hulud-2-0-aftermath-ongoing-supply-chain-attack) (November 2025 – compromised PostHog, Postman, AsyncAPI and leaked thousands of secrets) have shown that even popular packages can be compromised. **`npm audit` only detects known CVEs** – it won't catch a malicious postinstall script added yesterday.
-
-**chain-audit** fills this gap by scanning for suspicious patterns that indicate an active attack, not just known vulnerabilities.
-
 ---
 
 Scans your installed dependencies for malicious patterns including:
@@ -20,7 +16,7 @@ Scans your installed dependencies for malicious patterns including:
 - 🔴 Version mismatches vs lockfile
 - 🔴 Malicious install scripts (preinstall, postinstall, etc.)
 - 🔴 Network access patterns (curl, wget, fetch, Node.js http/https)
-- 🔴 Typosquatting attempts
+- 🔴 Typosquatting attempts (optional, use `--check-typosquatting`)
 - 🔴 Obfuscated code (base64, hex encoding)
 - 🔴 Credential/secret stealing patterns (env vars + network)
 - 🟡 Native binary modules
@@ -108,10 +104,10 @@ chain-audit --sarif > results.sarif
 chain-audit --scan-code
 
 # Detailed analysis with code snippets and evidence
-chain-audit --verbose --scan-code
+chain-audit --detailed --scan-code
 
-# Verbose output as JSON for further processing
-chain-audit --verbose --json --scan-code
+# Detailed output as JSON for further processing
+chain-audit --detailed --json --scan-code
 
 # Ignore specific packages and rules
 chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
@@ -120,10 +116,13 @@ chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
 chain-audit --verify-integrity --fail-on high
 
 # Deep scan with no file limit
-chain-audit --scan-code --max-files 0 --verbose
+chain-audit --scan-code --max-files 0 --detailed
 
 # Custom scan limits
 chain-audit --max-file-size 2097152 --max-depth 15
+
+# Enable typosquatting detection (disabled by default)
+chain-audit --check-typosquatting
 ```
 
 ## CLI Options
@@ -138,7 +137,7 @@ chain-audit --max-file-size 2097152 --max-depth 15
 | `-s, --severity <levels>` | Show only specified severity levels (comma-separated, e.g., `critical,high`) |
 | `--fail-on <level>` | Exit 1 if max severity >= level |
 | `--scan-code` | Deep scan JS files for suspicious patterns |
-| `-V, --verbose` | Show detailed analysis: code snippets with line numbers, matched patterns, package metadata, trust assessment, false positive hints, and verification steps |
+| `-V, --detailed` | Show detailed analysis: code snippets with line numbers, matched patterns, package metadata, trust assessment, false positive hints, and verification steps (`--verbose` is an alias for backward compatibility) |
 | `-v, --version` | Print version |
 | `-h, --help` | Show help |
 | `--init` | Generate example config file (`.chainauditrc.json`) |
@@ -152,6 +151,8 @@ chain-audit --max-file-size 2097152 --max-depth 15
 | `--max-depth <n>` | Max nested node_modules depth (default: 10) |
 | `--max-files <n>` | Max JS files to scan per package (0 = unlimited, default: 0) |
 | `--verify-integrity` | Additional checks for package structure tampering |
+| `--check-typosquatting` | Enable typosquatting detection (disabled by default) |
+| `--check-lockfile` | Check lockfile integrity (disabled by default due to possible false positives) |
 
 ## Severity Levels
 
@@ -161,7 +162,7 @@ chain-audit --max-file-size 2097152 --max-depth 15
 | `high` | Strong attack indicators | Suspicious install scripts with network/exec, typosquatting |
 | `medium` | Warrants investigation | Install scripts, shell execution patterns |
 | `low` | Informational | Native binaries, minimal metadata |
-| `info` | Metadata only | Trusted packages with install scripts |
+| `info` | Metadata only | Packages with install scripts that match trusted patterns (if configured) |
 
 ### Filtering by Severity
 
@@ -186,7 +187,7 @@ Issues will be displayed in the order they are found, grouped by the severity le
 ## Example Output
 
 ```
-chain-audit v0.5.7
+chain-audit v0.6.0
 ────────────────────────────────────────────────────────────
 
 node_modules: /path/to/project/node_modules
@@ -221,13 +222,15 @@ Summary:
 Max severity: CRITICAL
 ```
 
-## Verbose Mode (`--verbose`)
+## Detailed Mode (`--detailed`)
 
-The `--verbose` (`-V`) option provides detailed analysis to investigate findings and distinguish false positives from real threats.
+The `--detailed` (`-V`) option provides detailed analysis to investigate findings and distinguish false positives from real threats.
+
+> **Note:** `--verbose` is an alias for `--detailed` and is supported for backward compatibility.
 
 ### What's Included
 
-When `--verbose` is enabled, each finding includes:
+When `--detailed` is enabled, each finding includes:
 
 - **Code snippets** with line numbers showing exactly where issues were detected (3 lines of context before/after)
 - **Matched patterns** (regex) that triggered the detection
@@ -244,15 +247,17 @@ The trust score (0-100) is calculated based on multiple factors:
 
 | Factor | Points | Description |
 |--------|--------|-------------|
-| **Trusted scope** | +40 | Package is from a known trusted scope (e.g., `@babel/*`, `@types/*`, `@eslint/*`) |
-| **Known legitimate** | +50 | Package is in the known legitimate packages list |
+| **Trusted scope** | +40 | Package is from a scope listed in `trustedPackages` config (if configured) |
+| **Known legitimate** | +50 | Package is in the `trustedPackages` config list (if configured) |
 | **Has repository** | +20 | Package has a repository URL in package.json |
 | **Has homepage** | +10 | Package has a homepage URL |
 | **Has author** | +10 | Package has author information |
 | **Has license** | +10 | Package has a license field |
 
+**Note:** By default, no packages are whitelisted. All packages are checked with equal severity. You can configure `trustedPackages` in `.chainauditrc.json` if you need to reduce false positives for specific packages.
+
 **Trust Levels:**
-- **High (70-100)**: Package is likely legitimate (e.g., from trusted scope with repository)
+- **High (70-100)**: Package is likely legitimate (e.g., configured as trusted with repository)
 - **Medium (40-69)**: Package has some trust indicators but needs verification
 - **Low (0-39)**: Package lacks trust indicators, warrants closer investigation
 
@@ -267,7 +272,7 @@ Trust Assessment:
   ✗ No repository
 ```
 
-### When to Use Verbose Mode
+### When to Use Detailed Mode
 
 - **Manual investigation** of suspicious findings
 - **Creating security reports** with detailed evidence
@@ -308,15 +313,16 @@ Alternatively, you can manually create a config file in your project root. Suppo
     "native_binary"
   ],
   "trustedPackages": [
-    "esbuild",
-    "@swc/*",
-    "sharp"
+    // Empty by default - all packages are checked without exceptions
+    // Add packages here only if you need to reduce false positives for specific packages
+    // Example: "esbuild", "@swc/*", "sharp"
   ],
   "trustedPatterns": {
     "node-gyp rebuild": true,
     "prebuild-install": true
   },
   "scanCode": false,
+  "checkTyposquatting": false,
   "failOn": "high",
   "severity": ["critical", "high"],
   "format": "text",
@@ -334,13 +340,14 @@ Alternatively, you can manually create a config file in your project root. Suppo
 |--------|------|---------|-------------|
 | `ignoredPackages` | `string[]` | `[]` | Packages to skip (supports `*` wildcards) |
 | `ignoredRules` | `string[]` | `[]` | Rule IDs to ignore |
-| `trustedPackages` | `string[]` | `[esbuild, sharp, ...]` | Packages with reduced severity for install scripts |
+| `trustedPackages` | `string[]` | `[]` | Packages with reduced severity for install scripts (empty by default - all packages are checked) |
 | `trustedPatterns` | `object` | `{node-gyp rebuild: true, ...}` | Install script patterns considered safe |
 | `scanCode` | `boolean` | `false` | Enable deep code scanning by default |
+| `checkTyposquatting` | `boolean` | `false` | Enable typosquatting detection (disabled by default to reduce false positives) |
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
 | `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
-| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores |
+| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores (Note: CLI flag is `--detailed`, but config uses `verbose` for consistency) |
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
 | `maxFilesPerPackage` | `number` | `0` | Max JS files to scan per package (0 = unlimited) |
@@ -508,8 +515,8 @@ chain-audit automatically detects and parses:
 
 ### High Severity
 - **network_access_script** – Install script with curl/wget/fetch patterns
-- **potential_typosquat** – Package name similar to popular package
-- **suspicious_name_pattern** – Package name uses character substitution (l33t speak)
+- **potential_typosquat** – Package name similar to popular package (requires `--check-typosquatting`)
+- **suspicious_name_pattern** – Package name uses character substitution (l33t speak) (requires `--check-typosquatting`)
 - **eval_usage** – Code uses eval() or new Function()
 - **sensitive_path_access** – Code accesses ~/.ssh, ~/.aws, etc.
 - **shell_execution** – Script executes shell commands
@@ -557,6 +564,8 @@ npx chain-audit --fail-on high
 npm rebuild
 ```
 
+> 💡 **Note:** chain-audit analyzes scripts by reading them from `package.json` files (static analysis), not by executing them. This means it can detect malicious scripts even when using `--ignore-scripts`, because it reads the script content as text and checks for suspicious patterns
+
 > ⚠️ **Warning:** Even with `--ignore-scripts`, there is no 100% guarantee of security. Malicious code could execute when the package is `require()`d, or exploit vulnerabilities during extraction. For maximum security:
 > - Run installation in a **sandboxed environment**: Docker, Podman, or a VM (VirtualBox, VMware, QEMU/KVM)
 > - Use ephemeral CI runners (GitHub Actions, GitLab CI) that are destroyed after each run
@@ -570,8 +579,9 @@ npm rebuild
 4. **Combine with npm audit** – chain-audit detects different threats
 5. **Review all findings** – Some may be false positives
 6. **Use `--scan-code` periodically** – More thorough but slower
-7. **Use `--verbose` for manual investigation** – Get code snippets and trust assessment to distinguish false positives
+7. **Use `--detailed` for manual investigation** – Get code snippets and trust assessment to distinguish false positives (`--verbose` is an alias)
 8. **Keep registry secure** – Use private registry or npm audit signatures
+9. **All packages are checked equally** – No packages are whitelisted by default. Even popular packages like `sharp`, `esbuild`, or `@babel/*` are checked for malicious patterns. This ensures that compromised packages are detected regardless of their reputation.
 
 ## Contributing
 

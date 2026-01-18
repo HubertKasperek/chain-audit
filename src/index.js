@@ -88,7 +88,7 @@ function run(argv = process.argv) {
       console.log(color('  failOn', colors.cyan), '            - Exit 1 when max severity >= level');
       console.log(color('  severity', colors.cyan), '          - Filter to show only specific severity levels');
       console.log(color('  format', colors.cyan), '            - Output format: text, json, sarif');
-      console.log(color('  verbose', colors.cyan), '           - Show detailed analysis');
+      console.log(color('  detailed', colors.cyan), '          - Show detailed analysis (verbose is alias)');
       return { exitCode: 0 };
     } else {
       if (result.exists) {
@@ -223,13 +223,16 @@ ${color('OPTIONS:', colors.bold)}
   --fail-on <level>          Exit 1 when max severity >= level
                              (info|low|medium|high|critical)
   --scan-code                Scan JS files for suspicious patterns (slower)
-  -V, --verbose              Show detailed analysis for each finding:
+  --check-typosquatting      Check for typosquatting attempts (disabled by default)
+  --check-lockfile           Check lockfile integrity (disabled by default due to false positives)
+  -V, --detailed             Show detailed analysis for each finding:
                              • Code snippets with line numbers
                              • Matched patterns and evidence
                              • Package metadata (author, repo, license)
                              • Trust score assessment
                              • False positive analysis hints
                              • Verification steps
+                             (--verbose is an alias for backward compatibility)
   -v, --version              Print version
   -h, --help                 Show this help
   --init                     Generate example config file (.chainauditrc.json)
@@ -248,6 +251,7 @@ ${color('SCAN OPTIONS:', colors.bold)}
   --max-depth <n>            Max nested node_modules depth (default: 10)
   --max-files <n>            Max JS files to scan per package (0 = unlimited)
   --verify-integrity         Additional checks for package structure tampering
+  --check-typosquatting      Enable typosquatting detection (disabled by default)
 
 ${color('SEVERITY LEVELS:', colors.bold)}
   critical  Highly likely malicious (e.g., obfuscated code + network access)
@@ -279,10 +283,10 @@ ${color('EXAMPLES:', colors.bold)}
   chain-audit --scan-code --fail-on medium
 
   # Deep scan with no file limit
-  chain-audit --scan-code --max-files 0 --verbose
+  chain-audit --scan-code --max-files 0 --detailed
 
   # Detailed analysis with code snippets and evidence
-  chain-audit --verbose --scan-code
+  chain-audit --detailed --scan-code
 
 ${color('CONFIGURATION:', colors.bold)}
   Create a config file in your project root:
@@ -296,6 +300,12 @@ ${color('CONFIGURATION:', colors.bold)}
     "verifyIntegrity": false,
     "maxFilesPerPackage": 0
   }
+
+${color('DISCLAIMER:', colors.bold)}
+  This tool is provided "AS IS" without warranty. The author takes no
+  responsibility for false positives, false negatives, missed attacks, or
+  any damages resulting from use of this tool. Use at your own risk.
+  Always review findings manually and use as part of defense-in-depth.
 
 ${color('MORE INFO:', colors.bold)}
   https://github.com/hukasx0/chain-audit
