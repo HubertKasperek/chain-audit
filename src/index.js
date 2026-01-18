@@ -301,6 +301,12 @@ ${color('CONFIGURATION:', colors.bold)}
     "maxFilesPerPackage": 0
   }
 
+${color('DISCLAIMER:', colors.bold)}
+  This tool is provided "AS IS" without warranty. The author takes no
+  responsibility for false positives, false negatives, missed attacks, or
+  any damages resulting from use of this tool. Use at your own risk.
+  Always review findings manually and use as part of defense-in-depth.
+
 ${color('MORE INFO:', colors.bold)}
   https://github.com/hukasx0/chain-audit
 `;

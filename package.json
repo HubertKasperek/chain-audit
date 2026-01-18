@@ -1,6 +1,6 @@
 {
   "name": "chain-audit",
-  "version": "0.5.7",
+  "version": "0.6.0",
   "description": "Fast, zero-dependency CLI to detect supply chain attacks in node_modules. Scans for malicious install scripts, typosquatting, extraneous packages, and suspicious code patterns.",
   "main": "src/index.js",
   "bin": {

@@ -242,6 +242,15 @@ function formatText(issues, summary, context) {
     lines.push(`${color('Max severity:', colors.dim)} ${colorSeverity(summary.maxSeverity)}`);
   }
 
+  // Disclaimer
+  lines.push('');
+  lines.push(color('─'.repeat(60), colors.dim));
+  lines.push(color('⚠️  DISCLAIMER:', colors.yellow + colors.bold));
+  lines.push(color('This tool is provided "AS IS" without warranty. The author takes no', colors.dim));
+  lines.push(color('responsibility for false positives, false negatives, missed attacks, or', colors.dim));
+  lines.push(color('any damages resulting from use of this tool. Use at your own risk.', colors.dim));
+  lines.push(color('Always review findings manually and use as part of defense-in-depth.', colors.dim));
+
   // Footer with author and license
   lines.push('');
   lines.push(color('─'.repeat(60), colors.dim));
