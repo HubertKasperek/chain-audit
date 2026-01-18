@@ -107,8 +107,12 @@ const NODE_NETWORK_PATTERNS = [
   /\bsuperagent/,
   /\brequest\s*\(/,
   // WebSocket for C2 communication
+  // Only match actual WebSocket usage, not variable names like ws.length
   /\bWebSocket\s*\(/,
-  /\bws\s*[.(]/,
+  /\b(?:new\s+)?ws\s*\(/,  // ws() or new ws() - actual WebSocket constructor
+  /\brequire\s*\(\s*['"`]ws['"`]\s*\)/,  // require('ws')
+  /\bfrom\s+['"`]ws['"`]/,  // from 'ws'
+  /\bws\.(?:connect|send|close|on|emit)/,  // ws.connect, ws.send, etc.
   // DNS exfiltration
   /\bdns\.resolve/,
   /\bdns\.lookup/,
@@ -1577,7 +1581,7 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
 function analyzeCode(pkg, config, issues, verbose = false) {
   const maxFileSize = config.maxFileSizeForCodeScan || 1024 * 1024;
   const maxFiles = config.maxFilesPerPackage || 0; // 0 = unlimited
-  const jsFiles = findJsFiles(pkg.dir, 5); // Scan up to 5 levels deep
+  const jsFiles = findJsFiles(pkg.dir, 10); // Scan up to 10 levels deep
 
   // Apply file limit (0 means scan all files)
   const filesToScan = maxFiles > 0 ? jsFiles.slice(0, maxFiles) : jsFiles;
@@ -1653,6 +1657,32 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           const isDynamicImport = /(?:dynamicImport|dynamic.*import|import\s*\(|return\s+import)/i.test(contextAroundMatch);
           if (isDynamicImport && (matchText.includes('Function') || matchText.includes('eval'))) {
             continue; // Skip - used for dynamic import, which is a legit use case
+          }
+          
+          // Check for common legitimate Function() constructor patterns
+          // These are polyfills and compatibility code, not malicious
+          if (matchText.includes('Function')) {
+            const functionContext = content.slice(Math.max(0, matchIndex - 50), Math.min(content.length, matchIndex + matchText.length + 150));
+            // Function('return this')() - getting global object in strict mode (very common)
+            if (/Function\s*\(\s*['"`]return\s+this['"`]\s*\)\s*\(/i.test(functionContext)) {
+              continue; // Skip - legitimate pattern for getting global object
+            }
+            // Function('return async function () {}')() - polyfill for async function detection
+            if (/Function\s*\(\s*['"`]return\s+async\s+function/i.test(functionContext)) {
+              continue; // Skip - legitimate polyfill pattern
+            }
+            // Function('return function* () {}')() - polyfill for generator function detection
+            if (/Function\s*\(\s*['"`]return\s+function\s*\*/i.test(functionContext)) {
+              continue; // Skip - legitimate polyfill pattern
+            }
+            // Function('"use strict"; return (...).constructor;')() - getting constructor (polyfill)
+            if (/Function\s*\(\s*['"`]["']use\s+strict["'];?\s*return\s*\([^)]+\)\.constructor/i.test(functionContext)) {
+              continue; // Skip - legitimate polyfill pattern
+            }
+            // Function('binder', 'return function (...) { return binder.apply(...) }') - function binding polyfill
+            if (/Function\s*\(\s*['"`]binder['"`]\s*,\s*['"`]return\s+function/i.test(functionContext)) {
+              continue; // Skip - legitimate function binding pattern
+            }
           }
           
           // Skip if it's a template engine or known legitimate use case
@@ -1779,6 +1809,15 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           
           if (!hasActualUsage) {
             continue; // Skip - no actual usage found, might be false positive
+          }
+          
+          // Check if it's just checking system info (like ldd --version, uname, arch) - less suspicious
+          const contextAroundMatch = content.slice(Math.max(0, matchIndex - 200), Math.min(content.length, matchIndex + matchText.length + 200));
+          const isSystemCheck = /(?:ldd\s+--version|uname|arch|platform|os\.platform|process\.platform)/i.test(contextAroundMatch);
+          // Also check if it's execSync with simple read-only commands
+          if (isSystemCheck && /execSync/i.test(matchText)) {
+            // System checks are less suspicious - they're read-only operations
+            // But we still flag them with lower severity if they're in suspicious contexts
           }
           
           // Check if package is from trusted scope (only if configured by user)
@@ -1929,6 +1968,13 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         /(?:websocket|ws|wss)/i.test(relativePath)
       );
       
+      // Check if it's a browser-only package (fetch() is normal in browser packages)
+      const isBrowserPackage = pkg && (
+        /(?:^|\/)(?:browser|web|client|frontend)(?:\/|$)/i.test(pkg.name) ||
+        /(?:^|\/)(?:browser|web|client|frontend)(?:\/|$)/i.test(relativePath) ||
+        /\.browser\.(js|mjs|cjs)$/i.test(relativePath)
+      );
+      
       // Check if package is from trusted scope or known legitimate
       const isTrustedPackage = pkg && (
         KNOWN_LEGITIMATE_PACKAGES.has(pkg.name) ||
@@ -1955,6 +2001,11 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
             
             if (isTestFile) {
+              continue;
+            }
+            
+            // Skip fetch() in browser packages - it's the standard browser API
+            if (pattern.source.includes('fetch') && isBrowserPackage) {
               continue;
             }
             
@@ -2073,12 +2124,25 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         }
         
         let childProcessMatch = null;
+        let childProcessMatchIndex = -1;
         for (const pattern of CHILD_PROCESS_PATTERNS) {
           const match = pattern.exec(content);
           if (match) {
             pattern.lastIndex = 0;
             if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+              // For exec/spawn patterns, verify they're actually function calls, not just the word "exec"
+              if (pattern.source.includes('exec') || pattern.source.includes('spawn') || pattern.source.includes('fork')) {
+                // Check that it's actually a function call, not part of a variable name
+                const beforeMatch = content.slice(Math.max(0, match.index - 20), match.index);
+                const afterMatch = content.slice(match.index + match[0].length, match.index + match[0].length + 20);
+                // Should be preceded by whitespace, dot, or start of line, and followed by (
+                const isActualCall = /(?:^|\s|\.|\(|,|;|:)$/.test(beforeMatch.slice(-1)) && /^\s*\(/.test(afterMatch);
+                if (!isActualCall) {
+                  continue; // Skip - not an actual function call
+                }
+              }
               childProcessMatch = pattern;
+              childProcessMatchIndex = match.index;
               break;
             }
           }
@@ -2088,6 +2152,26 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         // Most frameworks use process.env for configuration - this is normal
         if (isTrustedPackage || isCompiledFile || isTestFile || isDocsOrExampleFile) {
           continue;
+        }
+        
+        // Check if it's a simple debug/env check (common and safe)
+        // Examples: process.env.DEBUG, process.env.NODE_ENV, process.env.NO_COLOR, process.env.NODE_DEBUG
+        const envContext = content.slice(Math.max(0, envMatchIndex - 50), Math.min(content.length, envMatchIndex + 100));
+        const simpleEnvCheck = envMatchText && /process\.env\.(NODE_DEBUG|DEBUG|NODE_ENV|NO_COLOR|FORCE_COLOR|CI|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD)/i.test(envContext);
+        
+        // If only safe env vars are accessed (like NODE_DEBUG) and there's no actual exec() call, skip
+        // The pattern might match "exec" in comments or variable names
+        if (simpleEnvCheck && childProcessMatch) {
+          // Verify child_process exec is actually used, not just mentioned
+          const childProcessContext = content.slice(Math.max(0, childProcessMatchIndex - 100), Math.min(content.length, childProcessMatchIndex + 200));
+          // Check if it's actually calling exec/spawn, not just referencing it
+          const hasActualExecCall = /(?:require|import).*child_process|child_process\.(?:exec|spawn|fork)|\.(?:exec|spawn|fork)\s*\(/i.test(childProcessContext);
+          // Also check if it's just checking system info (like ldd --version) - less suspicious
+          const isSystemCheck = /(?:ldd|uname|arch|platform|os)\s/i.test(childProcessContext);
+          if (!hasActualExecCall || isSystemCheck) {
+            // Skip if no actual exec call, or if it's just a system check
+            continue;
+          }
         }
         
         // Only flag if it's NOT a known framework/library pattern
@@ -2100,18 +2184,9 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           const isInstallScriptFile = /^install\.js$/i.test(path.basename(relativePath)) ||
                                      /^install\/[^/]+\.js$/i.test(relativePath);
           
-          // If it's an install script file, it's likely legitimate (downloading binaries, checking platform)
-          // But we still flag it with lower severity - user can review if needed
-          // We don't skip it completely, just note it's less suspicious
-          
-          // Check if it's a simple debug/env check (common and safe)
-          // Examples: process.env.DEBUG, process.env.NODE_ENV, process.env.NO_COLOR
-          const envContext = content.slice(Math.max(0, envMatchIndex - 50), Math.min(content.length, envMatchIndex + 100));
-          const simpleEnvCheck = envMatchText && /process\.env\.(DEBUG|NODE_ENV|NO_COLOR|FORCE_COLOR|CI|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD)/i.test(envContext);
-          
-          // If it's just a simple env check and the network/exec is also simple (like in a test or config),
-          // reduce severity or skip
-          if (simpleEnvCheck && (nodeNetworkMatch || networkMatch)) {
+          // If it's just a simple env check (NODE_DEBUG, etc.) and network access, skip
+          // These are common and safe patterns
+          if (simpleEnvCheck && (nodeNetworkMatch || networkMatch) && !childProcessMatch) {
             // Check if network access is also simple (like in a comment or test)
             const networkMatchObj = nodeNetworkMatch || networkMatch;
             let networkMatchIdx = -1;
@@ -2127,6 +2202,11 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             // If network match is also in a non-executable context, skip
             if (networkMatchIdx !== -1 && isMatchInNonExecutableContext(content, networkMatchIdx, 10)) {
               continue; // Both are in comments/strings - skip
+            }
+            
+            // If it's just NODE_DEBUG and fetch/network (common in debug logging), skip
+            if (/NODE_DEBUG/i.test(envContext)) {
+              continue; // NODE_DEBUG + network is common for debug logging, not exfiltration
             }
           }
           
