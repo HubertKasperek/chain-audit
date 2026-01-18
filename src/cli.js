@@ -170,7 +170,8 @@ function parseArgs(argv) {
         args.checkLockfile = true;
         break;
 
-      case '--verbose':
+      case '--detailed':
+      case '--verbose': // Alias for backward compatibility
       case '-V':
         args.verbose = true;
         break;

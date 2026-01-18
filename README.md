@@ -108,10 +108,10 @@ chain-audit --sarif > results.sarif
 chain-audit --scan-code
 
 # Detailed analysis with code snippets and evidence
-chain-audit --verbose --scan-code
+chain-audit --detailed --scan-code
 
-# Verbose output as JSON for further processing
-chain-audit --verbose --json --scan-code
+# Detailed output as JSON for further processing
+chain-audit --detailed --json --scan-code
 
 # Ignore specific packages and rules
 chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
@@ -120,7 +120,7 @@ chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
 chain-audit --verify-integrity --fail-on high
 
 # Deep scan with no file limit
-chain-audit --scan-code --max-files 0 --verbose
+chain-audit --scan-code --max-files 0 --detailed
 
 # Custom scan limits
 chain-audit --max-file-size 2097152 --max-depth 15
@@ -141,7 +141,7 @@ chain-audit --check-typosquatting
 | `-s, --severity <levels>` | Show only specified severity levels (comma-separated, e.g., `critical,high`) |
 | `--fail-on <level>` | Exit 1 if max severity >= level |
 | `--scan-code` | Deep scan JS files for suspicious patterns |
-| `-V, --verbose` | Show detailed analysis: code snippets with line numbers, matched patterns, package metadata, trust assessment, false positive hints, and verification steps |
+| `-V, --detailed` | Show detailed analysis: code snippets with line numbers, matched patterns, package metadata, trust assessment, false positive hints, and verification steps (`--verbose` is an alias for backward compatibility) |
 | `-v, --version` | Print version |
 | `-h, --help` | Show help |
 | `--init` | Generate example config file (`.chainauditrc.json`) |
@@ -226,13 +226,15 @@ Summary:
 Max severity: CRITICAL
 ```
 
-## Verbose Mode (`--verbose`)
+## Detailed Mode (`--detailed`)
 
-The `--verbose` (`-V`) option provides detailed analysis to investigate findings and distinguish false positives from real threats.
+The `--detailed` (`-V`) option provides detailed analysis to investigate findings and distinguish false positives from real threats.
+
+> **Note:** `--verbose` is an alias for `--detailed` and is supported for backward compatibility.
 
 ### What's Included
 
-When `--verbose` is enabled, each finding includes:
+When `--detailed` is enabled, each finding includes:
 
 - **Code snippets** with line numbers showing exactly where issues were detected (3 lines of context before/after)
 - **Matched patterns** (regex) that triggered the detection
@@ -274,7 +276,7 @@ Trust Assessment:
   ✗ No repository
 ```
 
-### When to Use Verbose Mode
+### When to Use Detailed Mode
 
 - **Manual investigation** of suspicious findings
 - **Creating security reports** with detailed evidence
@@ -349,7 +351,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
 | `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
-| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores |
+| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores<br>(Note: CLI flag is `--detailed`, but config uses `verbose` for consistency) |
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
 | `maxFilesPerPackage` | `number` | `0` | Max JS files to scan per package (0 = unlimited) |
@@ -581,7 +583,7 @@ npm rebuild
 4. **Combine with npm audit** – chain-audit detects different threats
 5. **Review all findings** – Some may be false positives
 6. **Use `--scan-code` periodically** – More thorough but slower
-7. **Use `--verbose` for manual investigation** – Get code snippets and trust assessment to distinguish false positives
+7. **Use `--detailed` for manual investigation** – Get code snippets and trust assessment to distinguish false positives (`--verbose` is an alias)
 8. **Keep registry secure** – Use private registry or npm audit signatures
 9. **All packages are checked equally** – No packages are whitelisted by default. Even popular packages like `sharp`, `esbuild`, or `@babel/*` are checked for malicious patterns. This ensures that compromised packages are detected regardless of their reputation.
 

@@ -116,10 +116,12 @@ const NODE_NETWORK_PATTERNS = [
 
 /**
  * Environment variable access patterns (potential credential stealing)
+ * IMPORTANT: Must detect process.env in all forms (with dot, bracket, or standalone)
  */
 const ENV_ACCESS_PATTERNS = [
-  /process\.env\s*\[/,
-  /process\.env\./,
+  /process\.env\s*\[/,      // process.env['KEY']
+  /process\.env\./,         // process.env.KEY
+  /\bprocess\.env\b/,       // process.env (standalone, e.g., JSON.stringify(process.env))
   // Specific sensitive env vars
   /\b(AWS_SECRET|AWS_ACCESS|GITHUB_TOKEN|NPM_TOKEN|API_KEY|SECRET_KEY|PRIVATE_KEY|PASSWORD|CREDENTIALS?)\b/i,
 ];
@@ -470,8 +472,22 @@ function analyzeScripts(pkg, config, issues, verbose = false) {
       // Flag all install scripts (medium baseline)
       // Reduce severity if it's just a simple npm command or has trusted patterns
       let baseSeverity = isTrusted ? 'info' : (hasTrustedPattern ? 'low' : 'medium');
+      
+      // Check for common legitimate install script patterns
+      const isCommonLegitimatePattern = 
+        /^(npm|yarn|pnpm|bun)\s+(run|test|start|build|install|ci|audit)/i.test(script.trim()) ||
+        /^node\s+install\.js$/i.test(script.trim()) ||
+        /^node\s+.*\/install\.js$/i.test(script.trim()) ||
+        /^node\s+install\/check$/i.test(script.trim()) || // sharp uses this
+        /^(prebuild-install|node-gyp|node-pre-gyp)/i.test(script.trim()) ||
+        /^husky\s+install/i.test(script.trim()) ||
+        /^patch-package/i.test(script.trim()) ||
+        /^node\s+.*\/postinstall/i.test(script.trim()); // Some packages have postinstall scripts
+      
       if (isSimpleNpmCommand && !isTrusted && !hasTrustedPattern) {
         baseSeverity = 'low'; // Simple npm commands in install scripts are less suspicious
+      } else if (isCommonLegitimatePattern && !isTrusted && !hasTrustedPattern) {
+        baseSeverity = 'low'; // Common legitimate patterns are less suspicious
       }
       
       const issue = {
@@ -1299,6 +1315,266 @@ function checkMetadataAnomalies(pkg, issues, verbose = false) {
 }
 
 /**
+ * Check if a match is in a comment, string literal, or regex pattern definition
+ * This helps reduce false positives when scanning code that defines detection patterns
+ */
+function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
+  // Get the line containing the match
+  const lines = content.split('\n');
+  let charCount = 0;
+  let lineIndex = 0;
+  let lineStart = 0;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const lineEnd = charCount + lines[i].length;
+    if (matchIndex >= charCount && matchIndex < lineEnd) {
+      lineIndex = i;
+      lineStart = charCount;
+      break;
+    }
+    charCount = lineEnd + 1; // +1 for newline
+  }
+  
+  const line = lines[lineIndex];
+  const matchInLine = matchIndex - lineStart;
+  const lineBeforeMatch = line.slice(0, matchInLine);
+  const lineAfterMatch = line.slice(matchInLine + matchLength);
+  
+  // Check if it's in a multi-line comment (need to check entire content, not just line)
+  const contentBeforeMatch = content.slice(0, matchIndex);
+  const lastCommentStart = contentBeforeMatch.lastIndexOf('/*');
+  if (lastCommentStart !== -1) {
+    const lastCommentEnd = contentBeforeMatch.lastIndexOf('*/');
+    if (lastCommentEnd < lastCommentStart) {
+      // Comment started but not closed - match is after comment start
+      return true; // In multi-line comment
+    }
+  }
+  
+  // Check if it's in a single-line comment
+  const singleLineCommentIndex = lineBeforeMatch.lastIndexOf('//');
+  if (singleLineCommentIndex !== -1) {
+    // Check if there's no newline between comment and match (same line)
+    const afterComment = lineBeforeMatch.slice(singleLineCommentIndex + 2);
+    if (!afterComment.includes('\n')) {
+      // No newline means we're still on the same line as the comment
+      // Check if there's an unclosed string (which would mean we're not in comment)
+      // But simpler: if // is before match on same line and no newline, we're in comment
+      return true; // In comment
+    }
+  }
+  
+  // Check if it's in a string literal (single, double, or template string)
+  // Need to check entire content before match, not just the line (for multiline strings)
+  let inString = false;
+  let stringChar = null;
+  let escaped = false;
+  
+  // Check entire content before match for string context
+  for (let i = 0; i < contentBeforeMatch.length; i++) {
+    const char = contentBeforeMatch[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if ((char === '"' || char === "'" || char === '`') && !inString) {
+      inString = true;
+      stringChar = char;
+    } else if (char === stringChar && inString) {
+      inString = false;
+      stringChar = null;
+    }
+  }
+  
+  // If we're in a string, check if match is also in the string
+  if (inString) {
+    // CRITICAL: Don't ignore patterns in strings if they're passed to code execution functions
+    // Malware often uses: eval("process.env.SECRET"), new Function("return process.env.TOKEN")
+    // Check if the string is passed to eval, Function, require, setTimeout, etc.
+    const dangerousContexts = [
+      /\beval\s*\(/,
+      /\bnew\s+Function\s*\(/,
+      /\bFunction\s*\(/,
+      /\brequire\s*\(/,
+      /\bsetTimeout\s*\(/,
+      /\bsetInterval\s*\(/,
+      /\bvm\.runInContext\s*\(/,
+      /\bvm\.runInNewContext\s*\(/,
+      /\bvm\.runInThisContext\s*\(/,
+      /\bvm\.compileFunction\s*\(/,
+    ];
+    
+    // Find the start of the string by looking backwards from match
+    let stringStartIndex = -1;
+    let foundQuote = false;
+    for (let i = matchInLine - 1; i >= 0; i--) {
+      if (lineBeforeMatch[i] === stringChar && (i === 0 || lineBeforeMatch[i - 1] !== '\\')) {
+        stringStartIndex = lineStart + i + 1; // +1 to get position after quote
+        foundQuote = true;
+        break;
+      }
+    }
+    
+    if (foundQuote && stringStartIndex !== -1) {
+      // Look backwards from string start to find if it's passed to dangerous function
+      const beforeString = content.slice(Math.max(0, stringStartIndex - 200), stringStartIndex);
+      
+      // Check if string is passed to dangerous function
+      for (const dangerousPattern of dangerousContexts) {
+        const dangerousMatch = beforeString.match(dangerousPattern);
+        if (dangerousMatch) {
+          // Check if the dangerous function call is before the string (within reasonable distance)
+          const dangerousIndex = stringStartIndex - beforeString.length + dangerousMatch.index;
+          const distance = stringStartIndex - dangerousIndex;
+          // If dangerous function is within 100 chars before string, don't ignore
+          if (distance < 100 && distance > 0) {
+            return false; // DON'T ignore - this is dangerous!
+          }
+        }
+      }
+      
+      // Also check for require("https://...") pattern specifically
+      if (stringChar === '"' || stringChar === "'") {
+        const requireMatch = beforeString.match(/\brequire\s*\(\s*$/);
+        if (requireMatch) {
+          // String is passed to require() - check if it's a URL
+          const afterMatch = content.slice(matchIndex + matchLength, matchIndex + matchLength + 20);
+          if (/https?:\/\//.test(afterMatch)) {
+            return false; // DON'T ignore - require("https://...") is suspicious!
+          }
+        }
+      }
+    }
+    
+    // If we're in a string and it's not passed to a dangerous function, ignore it
+    // Check if string continues after match (for template literals, check more content)
+    const contentAfterMatch = content.slice(matchIndex + matchLength, Math.min(content.length, matchIndex + matchLength + 200));
+    let foundStringEnd = false;
+    let afterEscaped = false;
+    
+    for (let i = 0; i < contentAfterMatch.length; i++) {
+      const char = contentAfterMatch[i];
+      if (afterEscaped) {
+        afterEscaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        afterEscaped = true;
+        continue;
+      }
+      if (char === stringChar) {
+        foundStringEnd = true;
+        break;
+      }
+      // For non-template strings, stop at newline
+      if (char === '\n' && stringChar !== '`') {
+        // String might have ended, but we can't be sure without checking the full context
+        // If we're in a string and haven't found dangerous context, it's safe to ignore
+        break;
+      }
+    }
+    
+    // If we're in a string and haven't found it's passed to dangerous function, ignore it
+    // This covers cases where string continues or ends - if it's not dangerous, ignore
+    return true; // Match is inside string (and not passed to dangerous function)
+  }
+  
+  // Check if it's in a regex pattern definition (e.g., /pattern/ or new RegExp(...))
+  // Look backwards from match to find regex literal start
+  // (contentBeforeMatch already defined above)
+  
+  // Find the last unescaped forward slash before the match
+  let lastSlashIndex = -1;
+  let isEscaped = false;
+  for (let i = contentBeforeMatch.length - 1; i >= 0; i--) {
+    const char = contentBeforeMatch[i];
+    if (isEscaped) {
+      isEscaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      isEscaped = true;
+      continue;
+    }
+    // Check if this slash starts a regex (not division)
+    // Regex starts after: =, (, [, {, ,, ;, :, !, &, |, ?, ~, +, -, *, /, %, ^, <, >, space, tab, newline
+    if (char === '/') {
+      const beforeSlash = contentBeforeMatch.slice(Math.max(0, i - 10), i);
+      const regexStartContext = /[=(\[{,;:!&|?~+\-*\/%^<> \t\n]$/.test(beforeSlash.slice(-1));
+      if (regexStartContext || i === 0) {
+        lastSlashIndex = i;
+        break;
+      }
+    }
+  }
+  
+  if (lastSlashIndex !== -1) {
+    // Check if there's a closing slash with optional flags after the match
+    const afterMatch = content.slice(matchIndex + matchLength);
+    const regexEndMatch = afterMatch.match(/^[^\/\n]*\/[gimuy]*/);
+    if (regexEndMatch) {
+      // Check if match is between the slashes
+      const regexEnd = matchIndex + matchLength + regexEndMatch[0].length;
+      const regexStart = lastSlashIndex;
+      if (matchIndex >= regexStart && matchIndex < regexEnd) {
+        return true; // In regex pattern
+      }
+    }
+  }
+  
+  // Check for RegExp constructor
+  const regExpMatch = contentBeforeMatch.match(/new\s+RegExp\s*\(/);
+  if (regExpMatch) {
+    // Find the closing parenthesis
+    let parenCount = 1;
+    let i = regExpMatch.index + regExpMatch[0].length;
+    while (i < matchIndex + matchLength && parenCount > 0 && i < content.length) {
+      const char = content[i];
+      if (char === '(') parenCount++;
+      else if (char === ')') parenCount--;
+      i++;
+    }
+    if (parenCount > 0 && matchIndex < i) {
+      return true; // In RegExp constructor
+    }
+  }
+  
+  // Check if it's in a regex pattern array definition (e.g., const PATTERNS = [/pattern/])
+  // Look for array literal with regex patterns
+  const arrayPatternMatch = contentBeforeMatch.match(/(?:const|let|var)\s+\w+\s*=\s*\[/);
+  if (arrayPatternMatch) {
+    // Find the closing bracket
+    let bracketCount = 1;
+    let i = arrayPatternMatch.index + arrayPatternMatch[0].length;
+    while (i < matchIndex + matchLength && bracketCount > 0 && i < content.length) {
+      const char = content[i];
+      if (char === '[') bracketCount++;
+      else if (char === ']') bracketCount--;
+      i++;
+    }
+    if (bracketCount > 0 && matchIndex < i) {
+      // Check if match is within a regex literal in the array
+      const arrayContent = content.slice(arrayPatternMatch.index + arrayPatternMatch[0].length, i);
+      const regexInArray = /\/[^\/\n]+\/[gimuy]*/g;
+      let regexMatch;
+      while ((regexMatch = regexInArray.exec(arrayContent)) !== null) {
+        const regexStart = arrayPatternMatch.index + arrayPatternMatch[0].length + regexMatch.index;
+        const regexEnd = regexStart + regexMatch[0].length;
+        if (matchIndex >= regexStart && matchIndex < regexEnd) {
+          return true; // In regex pattern within array definition
+        }
+      }
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Deep code analysis (optional, slower)
  */
 function analyzeCode(pkg, config, issues, verbose = false) {
@@ -1319,13 +1595,68 @@ function analyzeCode(pkg, config, issues, verbose = false) {
 
       // Check for eval patterns - reduce false positives
       for (const pattern of EVAL_PATTERNS) {
-        if (pattern.test(content)) {
-          // Skip if it's in a test directory (tests often use eval for mocking)
-          const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
+        const patternMatch = pattern.exec(content);
+        if (patternMatch) {
+          // Reset regex lastIndex for next use
+          pattern.lastIndex = 0;
           
-          // Skip minified/bundled files (dist/*.min.js, dist/*.bundle.js, etc.)
-          const isMinifiedOrBundled = /\.(?:min|bundle|dist)\.(?:js|mjs|cjs)$/i.test(relativePath) ||
-                                     /(?:^|\/)(?:dist|build|lib)\/.*\.(?:min|bundle)\.(?:js|mjs|cjs)$/i.test(relativePath);
+          // Skip if match is in comment, string, or regex definition
+          if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+            continue;
+          }
+          
+          // Skip false positives: "eval" in variable/function names (e.g., "unevaluated", "evaluate", "evaluation")
+          // Check if "eval" is part of a longer word (not a function call)
+          const matchText = patternMatch[0];
+          const matchIndex = patternMatch.index;
+          const beforeMatch = content.slice(Math.max(0, matchIndex - 20), matchIndex);
+          const afterMatch = content.slice(matchIndex + matchText.length, matchIndex + matchText.length + 20);
+          
+          // Check if it's part of a longer identifier (e.g., "unevaluated", "evaluate", "evaluation")
+          // Also check for common false positives like "unevaluatedProperties", "evaluateExpression", etc.
+          const isPartOfIdentifier = /[a-zA-Z_$]/.test(beforeMatch.slice(-1)) || /[a-zA-Z0-9_$]/.test(afterMatch.slice(0, 1));
+          const isCommonFalsePositive = /\b(unevaluated|evaluate|evaluation|evaluated|evaluator|evaluates)\w*/i.test(beforeMatch + matchText + afterMatch);
+          
+          if ((isPartOfIdentifier && !matchText.includes('(')) || isCommonFalsePositive) {
+            continue; // Skip - it's part of a variable/function name, not eval() call
+          }
+          
+          // Skip if it's in a test directory or test file (tests often use eval for mocking)
+          const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath) ||
+                            /(?:^|\/)(?:test|spec)\.(js|mjs|cjs)$/i.test(relativePath);
+          
+          // Skip minified/bundled files, but NOT main package files or executables
+          // IMPORTANT: Don't skip bin/* files (executables) or main package files (index.cjs, main.cjs)
+          // These are high-risk entry points that should always be scanned!
+          const isMinifiedOrBundled = 
+            // Only skip files with .min/.bundle extension in dist/build/lib directories
+            (/\.(?:min|bundle)\.(?:js|mjs|cjs)$/i.test(relativePath) &&
+             /(?:^|\/)(?:dist|build|lib)\//i.test(relativePath)) ||
+            // Skip minified files in dist/build/lib even without extension
+            (/(?:^|\/)(?:dist|build|lib)\/.*\.(?:min|bundle)\.(?:js|mjs|cjs)$/i.test(relativePath));
+          
+          // NEVER skip:
+          // - bin/* files (executables - high risk!)
+          // - Main package files (index.cjs, main.cjs in root)
+          // - Source files (.cjs in src/ or root)
+          const isMainPackageFile = /^(index|main)\.(cjs|js|mjs)$/i.test(relativePath);
+          const isExecutable = /^bin\//i.test(relativePath);
+          const isSourceFile = /^src\//i.test(relativePath);
+          
+          if (isMainPackageFile || isExecutable || isSourceFile) {
+            // Always scan main package files, executables, and source files - these are high-risk!
+            // Don't skip even if they match minified patterns
+          } else if (isMinifiedOrBundled) {
+            // Skip only truly minified files in dist/build/lib
+            continue;
+          }
+          
+          // Check if eval/new Function is used for dynamic import (legit use case)
+          const contextAroundMatch = content.slice(Math.max(0, matchIndex - 100), Math.min(content.length, matchIndex + matchText.length + 100));
+          const isDynamicImport = /(?:dynamicImport|dynamic.*import|import\s*\(|return\s+import)/i.test(contextAroundMatch);
+          if (isDynamicImport && (matchText.includes('Function') || matchText.includes('eval'))) {
+            continue; // Skip - used for dynamic import, which is a legit use case
+          }
           
           // Skip if it's a template engine or known legitimate use case
           const isTemplateEngine = /(?:template|render|compile|parse|eval)/i.test(relativePath) ||
@@ -1407,25 +1738,80 @@ function analyzeCode(pkg, config, issues, verbose = false) {
 
       // Check for child_process - reduce false positives for build tools
       for (const pattern of CHILD_PROCESS_PATTERNS) {
-        if (pattern.test(content)) {
+        const patternMatch = pattern.exec(content);
+        if (patternMatch) {
+          // Reset regex lastIndex for next use
+          pattern.lastIndex = 0;
+          
+          // Skip if match is in comment, string, or regex definition
+          if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+            continue;
+          }
+          
+          // Check for false positives: "child_process" in variable names or comments
+          const matchText = patternMatch[0];
+          const matchIndex = patternMatch.index;
+          const beforeMatch = content.slice(Math.max(0, matchIndex - 30), matchIndex);
+          const afterMatch = content.slice(matchIndex + matchText.length, matchIndex + matchText.length + 30);
+          
+          // Check if it's part of a longer identifier or in a comment
+          const isPartOfIdentifier = /[a-zA-Z_$]/.test(beforeMatch.slice(-1)) || /[a-zA-Z0-9_$]/.test(afterMatch.slice(0, 1));
+          const isInComment = /\/\/.*child_process|\/\*[\s\S]*?child_process/i.test(beforeMatch + matchText);
+          
+          if (isPartOfIdentifier || isInComment) {
+            continue; // Skip - it's part of a variable/function name or in a comment
+          }
+          
+          // Check if it's actually used (not just referenced in a string or comment)
+          // For exec/spawn/fork patterns, these are direct function calls and are suspicious even without require nearby
+          // For "child_process" string, check if it's actually required/imported
+          const isDirectFunctionCall = /^(exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(/i.test(matchText);
+          
+          let hasActualUsage = false;
+          if (isDirectFunctionCall) {
+            // Direct function calls like exec(), spawn() are suspicious even without require in context
+            // Check if child_process is required/imported anywhere in the file
+            const actualUsagePattern = /(?:require|import|from)\s*\(?\s*['"`]child_process['"`]/i;
+            hasActualUsage = actualUsagePattern.test(content);
+          } else {
+            // For "child_process" string match, check in context (more likely to be false positive)
+            const actualUsagePattern = /(?:require|import|from)\s*\(?\s*['"`]child_process['"`]/i;
+            const contextAroundMatch = content.slice(Math.max(0, matchIndex - 100), Math.min(content.length, matchIndex + matchText.length + 100));
+            hasActualUsage = actualUsagePattern.test(contextAroundMatch);
+          }
+          
+          if (!hasActualUsage) {
+            continue; // Skip - no actual usage found, might be false positive
+          }
+          
           // Check if package is from trusted scope (only if configured by user)
           const isTrustedPackage = pkg && (
             KNOWN_LEGITIMATE_PACKAGES.has(pkg.name) ||
             (pkg.name.startsWith('@') && TRUSTED_SCOPES.has(pkg.name.split('/')[0]))
           );
           
-          // Skip if it's in a build/dist/cjs directory or looks like a build tool
+          // Skip if it's in a build/dist/lib directory or looks like a build tool
+          // IMPORTANT: NEVER skip bin/ files (executables) or main package files - these are high-risk!
           // This is a structural check, not a package whitelist
-          const isBuildFile = /(?:^|\/)(?:build|dist|lib|bin|scripts?|tools?|cli|cjs|esm|umd)(?:\/|$)/i.test(relativePath) ||
+          const isBuildFile = /(?:^|\/)(?:build|dist|lib|scripts?|tools?|cjs|esm|umd)(?:\/|$)/i.test(relativePath) ||
                              /\.(?:config|webpack|rollup|vite|esbuild)\./i.test(relativePath);
+          
+          // NEVER skip executables or main package files
+          const isMainPackageFile = /^(index|main)\.(cjs|js|mjs)$/i.test(relativePath);
+          const isExecutable = /^bin\//i.test(relativePath);
+          const isSourceFile = /^src\//i.test(relativePath);
           
           // All packages are checked - no hardcoded build tool whitelist
           // Users can configure trustedPackages if needed
           
           // Skip if it's a test file
-          const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
+          const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath) ||
+                            /(?:^|\/)(?:test|spec)\.(js|mjs|cjs)$/i.test(relativePath);
           
-          if (isBuildFile || isTrustedPackage || isTestFile) {
+          // Always scan executables, main package files, and source files - these are high-risk entry points!
+          if (isMainPackageFile || isExecutable || isSourceFile) {
+            // Don't skip - these are critical files that should always be scanned
+          } else if (isBuildFile || isTrustedPackage || isTestFile) {
             // Build files (based on path structure), user-configured trusted packages, and test files are skipped
             // Users can configure trustedPackages or use --ignore-rules child_process_usage if needed
             continue;
@@ -1470,7 +1856,16 @@ function analyzeCode(pkg, config, issues, verbose = false) {
 
       // Check for sensitive path access
       for (const pattern of SENSITIVE_PATH_PATTERNS) {
-        if (pattern.test(content)) {
+        const patternMatch = pattern.exec(content);
+        if (patternMatch) {
+          // Reset regex lastIndex for next use
+          pattern.lastIndex = 0;
+          
+          // Skip if match is in comment, string, or regex definition
+          if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+            continue;
+          }
+          
           // Check if package is from trusted scope or known legitimate
           const isTrustedPackage = pkg && (
             KNOWN_LEGITIMATE_PACKAGES.has(pkg.name) ||
@@ -1549,7 +1944,16 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       
       if (!isHttpClient && !isWebSocketRelated && !isTrustedPackage && !isCompiledFile) {
         for (const pattern of NODE_NETWORK_PATTERNS) {
-          if (pattern.test(content)) {
+          const patternMatch = pattern.exec(content);
+          if (patternMatch) {
+            // Reset regex lastIndex for next use
+            pattern.lastIndex = 0;
+            
+            // Skip if match is in comment, string, or regex definition
+            if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+              continue;
+            }
+            
             // Skip if it's in a test directory (tests often mock network calls)
             const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
             
@@ -1596,7 +2000,23 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       }
 
       // Check for env var access (in context)
-      const envMatch = ENV_ACCESS_PATTERNS.find(p => p.test(content));
+      let envMatch = null;
+      let envMatchIndex = -1;
+      let envMatchText = null;
+      for (const pattern of ENV_ACCESS_PATTERNS) {
+        const match = pattern.exec(content);
+        if (match) {
+          pattern.lastIndex = 0;
+          // Skip if match is in comment, string, or regex definition
+          if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+            envMatch = pattern;
+            envMatchIndex = match.index;
+            envMatchText = match[0];
+            break;
+          }
+        }
+      }
+      
       if (envMatch) {
         // Skip known legitimate packages that use env vars (ESLint, config loaders, etc.)
         // IMPORTANT: Use exact matches or trusted scopes to avoid missing typosquatting attacks
@@ -1630,9 +2050,42 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         const isDocsOrExampleFile = /(?:^|\/)(?:docs|example|examples|demo|demos)(?:\/|$)/i.test(relativePath);
         
         // Only flag if also has network patterns or child_process
-        const networkMatch = NETWORK_PATTERNS.find(p => p.test(content));
-        const nodeNetworkMatch = NODE_NETWORK_PATTERNS.find(p => p.test(content));
-        const childProcessMatch = CHILD_PROCESS_PATTERNS.find(p => p.test(content));
+        // Check for network/child_process patterns, but skip if in comments/strings/regex
+        let networkMatch = null;
+        for (const pattern of NETWORK_PATTERNS) {
+          const match = pattern.exec(content);
+          if (match) {
+            pattern.lastIndex = 0;
+            if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+              networkMatch = pattern;
+              break;
+            }
+          }
+        }
+        
+        let nodeNetworkMatch = null;
+        for (const pattern of NODE_NETWORK_PATTERNS) {
+          const match = pattern.exec(content);
+          if (match) {
+            pattern.lastIndex = 0;
+            if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+              nodeNetworkMatch = pattern;
+              break;
+            }
+          }
+        }
+        
+        let childProcessMatch = null;
+        for (const pattern of CHILD_PROCESS_PATTERNS) {
+          const match = pattern.exec(content);
+          if (match) {
+            pattern.lastIndex = 0;
+            if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+              childProcessMatch = pattern;
+              break;
+            }
+          }
+        }
         
         // Skip if it's a known legitimate package, compiled file, test file, or docs/example
         // Most frameworks use process.env for configuration - this is normal
@@ -1644,11 +2097,57 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         // Most legitimate packages use process.env for config, not for exfiltration
         // Only flag if there are suspicious patterns (like actual exfiltration attempts)
         if (networkMatch || nodeNetworkMatch || childProcessMatch) {
+          // Check if it's an install script (install.js in package root)
+          // Install scripts often legitimately use process.env + network for downloading binaries
+          // We check the file path, not package name - all packages are treated equally
+          const isInstallScriptFile = /^install\.js$/i.test(path.basename(relativePath)) ||
+                                     /^install\/[^\/]+\.js$/i.test(relativePath);
+          
+          // If it's an install script file, it's likely legitimate (downloading binaries, checking platform)
+          // But we still flag it with lower severity - user can review if needed
+          // We don't skip it completely, just note it's less suspicious
+          
+          // Check if it's a simple debug/env check (common and safe)
+          // Examples: process.env.DEBUG, process.env.NODE_ENV, process.env.NO_COLOR
+          const envContext = content.slice(Math.max(0, envMatchIndex - 50), Math.min(content.length, envMatchIndex + 100));
+          const simpleEnvCheck = envMatchText && /process\.env\.(DEBUG|NODE_ENV|NO_COLOR|FORCE_COLOR|CI|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD)/i.test(envContext);
+          
+          // If it's just a simple env check and the network/exec is also simple (like in a test or config),
+          // reduce severity or skip
+          if (simpleEnvCheck && (nodeNetworkMatch || networkMatch)) {
+            // Check if network access is also simple (like in a comment or test)
+            const networkMatchObj = nodeNetworkMatch || networkMatch;
+            let networkMatchIdx = -1;
+            for (const pattern of (nodeNetworkMatch ? NODE_NETWORK_PATTERNS : NETWORK_PATTERNS)) {
+              const match = pattern.exec(content);
+              if (match && pattern === networkMatchObj) {
+                pattern.lastIndex = 0;
+                networkMatchIdx = match.index;
+                break;
+              }
+            }
+            
+            // If network match is also in a non-executable context, skip
+            if (networkMatchIdx !== -1 && isMatchInNonExecutableContext(content, networkMatchIdx, 10)) {
+              continue; // Both are in comments/strings - skip
+            }
+          }
+          
+          // Determine severity based on context
+          // Install scripts often legitimately use env + network (downloading binaries)
+          // But we still flag them - user should review, but with lower severity
+          let severity = 'critical';
+          if (isInstallScriptFile) {
+            severity = 'medium'; // Install scripts are less suspicious, but still worth reviewing
+          }
+          
           const issue = {
-            severity: 'critical',
+            severity: severity,
             reason: 'env_with_network',
             detail: `File "${relativePath}" accesses environment variables and has network/exec capabilities`,
-            recommendation: 'DANGER: This pattern matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.',
+            recommendation: isInstallScriptFile 
+              ? 'Install scripts often use env vars + network to download binaries. Review to ensure it\'s legitimate.'
+              : 'DANGER: This pattern matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.',
           };
           
           if (verbose) {
@@ -1673,11 +2172,14 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               networkCodeSnippet: networkSnippet?.snippet || null,
               networkLineNumber: networkSnippet?.lineNumber || null,
               falsePositiveHints: [
+                isInstallScriptFile ? '⚠ This appears to be an install script - may legitimately download binaries' : null,
                 '⚠ This is a HIGH-RISK pattern matching known attacks',
-                'Legitimate uses: reading config from env for API calls',
+                'Legitimate uses: reading config from env for API calls, install scripts downloading binaries',
                 'Check what env vars are accessed and where data is sent',
-              ],
-              riskAssessment: 'CRITICAL - Matches Shai-Hulud 2.0 and similar attack patterns',
+              ].filter(Boolean),
+              riskAssessment: isInstallScriptFile 
+                ? 'MEDIUM - Install scripts often use env + network legitimately, but should be reviewed'
+                : 'CRITICAL - Matches Shai-Hulud 2.0 and similar attack patterns',
               attackPattern: 'Environment variable access combined with network/exec = potential credential exfiltration',
             };
           }
@@ -1706,19 +2208,34 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       // Skip if it's clearly a minified or build output file, known package, or data file
       if (!isMinifiedFile && !isKnownPackage && !isDataFile) {
         for (const pattern of OBFUSCATION_PATTERNS) {
-          if (pattern.test(content)) {
+          const patternMatch = pattern.exec(content);
+          if (patternMatch) {
+            // Reset regex lastIndex for next use
+            pattern.lastIndex = 0;
+            
+            // Skip if match is in comment, string, or regex definition
+            // (though obfuscation patterns are less likely to be false positives from this)
+            if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+              continue;
+            }
             // Distinguish minified from obfuscated:
             // Minified: short variable names, no whitespace, but readable structure (functions, if/else visible)
             // Obfuscated: base64 strings, hex escapes, char codes, unreadable structure
             
             // Check if it's likely minified (has readable structure despite compression)
-            const hasReadableStructure = /function\s+\w+|if\s*\(|for\s*\(|while\s*\(|return\s+/.test(content);
-            const hasMinifiedPattern = content.length < 50000 && 
-                                     content.split('\n').length < 100 &&
-                                     /^[a-zA-Z0-9+/=]{100,}$/.test(content.slice(0, 200));
+            const hasReadableStructure = /function\s+\w+|if\s*\(|for\s*\(|while\s*\(|return\s+|const\s+\w+|let\s+\w+|var\s+\w+/.test(content);
             
-            // If it has readable structure, it's likely minified, not obfuscated
-            const isLikelyMinified = hasMinifiedPattern && hasReadableStructure;
+            // Check for minified patterns: very long single-line files with compressed code
+            const lines = content.split('\n');
+            const isSingleLineOrFewLines = lines.length <= 20;
+            const hasLongCompressedLine = lines.some(line => line.length > 10000 && /[a-zA-Z_$][a-zA-Z0-9_$]{0,2}\s*[=:\(]/.test(line));
+            
+            // Check if it's a compiled/minified file (has function structure but compressed)
+            const hasMinifiedStructure = hasReadableStructure && (isSingleLineOrFewLines || hasLongCompressedLine);
+            
+            // Also check for typical minification patterns: short variable names, compressed but readable
+            const hasShortVarNames = /var\s+[a-z]\s*=|const\s+[a-z]\s*=|let\s+[a-z]\s*=/.test(content);
+            const isLikelyMinified = hasMinifiedStructure || (hasReadableStructure && hasShortVarNames && content.length < 200000);
             
             if (isLikelyMinified) {
               continue; // Skip minified files (they have readable structure)

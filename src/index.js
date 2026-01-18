@@ -88,7 +88,7 @@ function run(argv = process.argv) {
       console.log(color('  failOn', colors.cyan), '            - Exit 1 when max severity >= level');
       console.log(color('  severity', colors.cyan), '          - Filter to show only specific severity levels');
       console.log(color('  format', colors.cyan), '            - Output format: text, json, sarif');
-      console.log(color('  verbose', colors.cyan), '           - Show detailed analysis');
+      console.log(color('  detailed', colors.cyan), '          - Show detailed analysis (verbose is alias)');
       return { exitCode: 0 };
     } else {
       if (result.exists) {
@@ -225,13 +225,14 @@ ${color('OPTIONS:', colors.bold)}
   --scan-code                Scan JS files for suspicious patterns (slower)
   --check-typosquatting      Check for typosquatting attempts (disabled by default)
   --check-lockfile           Check lockfile integrity (disabled by default due to false positives)
-  -V, --verbose              Show detailed analysis for each finding:
+  -V, --detailed             Show detailed analysis for each finding:
                              • Code snippets with line numbers
                              • Matched patterns and evidence
                              • Package metadata (author, repo, license)
                              • Trust score assessment
                              • False positive analysis hints
                              • Verification steps
+                             (--verbose is an alias for backward compatibility)
   -v, --version              Print version
   -h, --help                 Show this help
   --init                     Generate example config file (.chainauditrc.json)
@@ -282,10 +283,10 @@ ${color('EXAMPLES:', colors.bold)}
   chain-audit --scan-code --fail-on medium
 
   # Deep scan with no file limit
-  chain-audit --scan-code --max-files 0 --verbose
+  chain-audit --scan-code --max-files 0 --detailed
 
   # Detailed analysis with code snippets and evidence
-  chain-audit --verbose --scan-code
+  chain-audit --detailed --scan-code
 
 ${color('CONFIGURATION:', colors.bold)}
   Create a config file in your project root:
