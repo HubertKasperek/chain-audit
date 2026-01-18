@@ -1338,7 +1338,6 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
   const line = lines[lineIndex];
   const matchInLine = matchIndex - lineStart;
   const lineBeforeMatch = line.slice(0, matchInLine);
-  const lineAfterMatch = line.slice(matchInLine + matchLength);
   
   // Check if it's in a multi-line comment (need to check entire content, not just line)
   const contentBeforeMatch = content.slice(0, matchIndex);
@@ -1453,7 +1452,6 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
     // If we're in a string and it's not passed to a dangerous function, ignore it
     // Check if string continues after match (for template literals, check more content)
     const contentAfterMatch = content.slice(matchIndex + matchLength, Math.min(content.length, matchIndex + matchLength + 200));
-    let foundStringEnd = false;
     let afterEscaped = false;
     
     for (let i = 0; i < contentAfterMatch.length; i++) {
@@ -1467,7 +1465,6 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
         continue;
       }
       if (char === stringChar) {
-        foundStringEnd = true;
         break;
       }
       // For non-template strings, stop at newline
@@ -1504,7 +1501,7 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
     // Regex starts after: =, (, [, {, ,, ;, :, !, &, |, ?, ~, +, -, *, /, %, ^, <, >, space, tab, newline
     if (char === '/') {
       const beforeSlash = contentBeforeMatch.slice(Math.max(0, i - 10), i);
-      const regexStartContext = /[=(\[{,;:!&|?~+\-*\/%^<> \t\n]$/.test(beforeSlash.slice(-1));
+      const regexStartContext = /[=(\[{,;:!&|?~+\-*/%^<> \t\n]$/.test(beforeSlash.slice(-1));
       if (regexStartContext || i === 0) {
         lastSlashIndex = i;
         break;
@@ -1515,7 +1512,7 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
   if (lastSlashIndex !== -1) {
     // Check if there's a closing slash with optional flags after the match
     const afterMatch = content.slice(matchIndex + matchLength);
-    const regexEndMatch = afterMatch.match(/^[^\/\n]*\/[gimuy]*/);
+      const regexEndMatch = afterMatch.match(/^[^/\n]*\/[gimuy]*/);
     if (regexEndMatch) {
       // Check if match is between the slashes
       const regexEnd = matchIndex + matchLength + regexEndMatch[0].length;
@@ -1559,7 +1556,7 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
     if (bracketCount > 0 && matchIndex < i) {
       // Check if match is within a regex literal in the array
       const arrayContent = content.slice(arrayPatternMatch.index + arrayPatternMatch[0].length, i);
-      const regexInArray = /\/[^\/\n]+\/[gimuy]*/g;
+      const regexInArray = /\/[^/\n]+\/[gimuy]*/g;
       let regexMatch;
       while ((regexMatch = regexInArray.exec(arrayContent)) !== null) {
         const regexStart = arrayPatternMatch.index + arrayPatternMatch[0].length + regexMatch.index;
@@ -2101,7 +2098,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           // Install scripts often legitimately use process.env + network for downloading binaries
           // We check the file path, not package name - all packages are treated equally
           const isInstallScriptFile = /^install\.js$/i.test(path.basename(relativePath)) ||
-                                     /^install\/[^\/]+\.js$/i.test(relativePath);
+                                     /^install\/[^/]+\.js$/i.test(relativePath);
           
           // If it's an install script file, it's likely legitimate (downloading binaries, checking platform)
           // But we still flag it with lower severity - user can review if needed
@@ -2228,7 +2225,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             // Check for minified patterns: very long single-line files with compressed code
             const lines = content.split('\n');
             const isSingleLineOrFewLines = lines.length <= 20;
-            const hasLongCompressedLine = lines.some(line => line.length > 10000 && /[a-zA-Z_$][a-zA-Z0-9_$]{0,2}\s*[=:\(]/.test(line));
+            const hasLongCompressedLine = lines.some(line => line.length > 10000 && /[a-zA-Z_$][a-zA-Z0-9_$]{0,2}\s*[=:(]/.test(line));
             
             // Check if it's a compiled/minified file (has function structure but compressed)
             const hasMinifiedStructure = hasReadableStructure && (isSingleLineOrFewLines || hasLongCompressedLine);
