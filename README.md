@@ -174,7 +174,7 @@ Issues will be displayed in the order they are found, grouped by the severity le
 ## Example Output
 
 ```
-chain-audit v0.6.1
+chain-audit v0.6.2
 ────────────────────────────────────────────────────────────
 
 node_modules: /path/to/project/node_modules
