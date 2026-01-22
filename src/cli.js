@@ -210,12 +210,27 @@ function findSimilarFlags(unknownFlag, maxSuggestions = 2) {
     return a.flag.localeCompare(b.flag);
   });
 
-  // Filter out flags that are too different (distance > 50% of longer string length)
-  const maxDistance = Math.max(
-    Math.floor(unknownFlag.length * 0.5),
-    Math.floor(Math.max(...validFlags.map(f => f.length)) * 0.5),
-    3
-  );
+  // Filter out flags that are too different
+  // Use stricter criteria based on flag length
+  const avgFlagLength = validFlags.reduce((sum, f) => sum + f.length, 0) / validFlags.length;
+  
+  let maxDistance;
+  
+  // For very long flags (much longer than average), be very strict
+  if (unknownFlag.length > avgFlagLength * 1.5) {
+    // Only suggest if distance is very small (typo-like, max 2-3 edits)
+    maxDistance = Math.min(3, Math.floor(unknownFlag.length * 0.15));
+  } else {
+    // For normal-length flags, use 30-40% of shorter string, but cap at 4
+    const minLength = Math.min(
+      unknownFlag.length,
+      Math.min(...validFlags.map(f => f.length))
+    );
+    maxDistance = Math.min(
+      Math.max(Math.floor(minLength * 0.4), 2), // At least 2, but max 40% of shorter string
+      4 // Absolute maximum distance for normal flags
+    );
+  }
 
   return similarities
     .filter(item => item.distance <= maxDistance)
