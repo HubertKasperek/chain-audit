@@ -419,7 +419,7 @@ function parseArgs(argv) {
       default:
         if (arg.startsWith('-')) {
           const similarFlags = findSimilarFlags(arg);
-          let errorMsg = `Unknown flag: "${arg}".\nSee \'--help\' for available options.`;
+          let errorMsg = `Unknown flag: "${arg}".\nSee '--help' for available options.`;
           
           if (similarFlags.length > 0) {
             errorMsg += '\n\nThe most similar flag';
