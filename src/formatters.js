@@ -344,7 +344,7 @@ function formatJson(issues, summary, context) {
  */
 function formatSarif(issues, summary, context) {
   const sarif = {
-    $schema: 'https://raw.githubusercontent.com/microsoft/sarif-js-sdk/refs/heads/main/packages/sarif-matcher-utils/src/schemas/sarif-2.1.0-rtm.5.json',
+    $schema: 'http://json.schemastore.org/sarif-2.1.0',
     version: '2.1.0',
     runs: [
       {

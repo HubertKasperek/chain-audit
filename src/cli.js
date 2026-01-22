@@ -65,6 +65,165 @@ function parseNonNegativeInt(value, flag, allowZero = false) {
 }
 
 /**
+ * Calculate Levenshtein distance between two strings
+ * @param {string} a - First string
+ * @param {string} b - Second string
+ * @returns {number} Edit distance
+ */
+function levenshteinDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array(m + 1)
+    .fill(null)
+    .map(() => Array(n + 1).fill(0));
+
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = Math.min(
+          dp[i - 1][j] + 1, // deletion
+          dp[i][j - 1] + 1, // insertion
+          dp[i - 1][j - 1] + 1 // substitution
+        );
+      }
+    }
+  }
+
+  return dp[m][n];
+}
+
+/**
+ * Get flag requirements description
+ * @param {string} flag - Flag name
+ * @returns {string|null} Description of what the flag requires, or null if no value needed
+ */
+function getFlagRequirement(flag) {
+  const requirements = {
+    '--node-modules': 'path',
+    '-n': 'path',
+    '--lock': 'lockfile path',
+    '-l': 'lockfile path',
+    '--config': 'config path',
+    '-c': 'config path',
+    '--json': null,
+    '--sarif': null,
+    '--fail-on': 'severity level',
+    '--severity': 'severity levels (comma-separated)',
+    '-s': 'severity levels (comma-separated)',
+    '--scan-code': null,
+    '--check-typosquatting': null,
+    '--check-lockfile': null,
+    '--detailed': null,
+    '--verbose': null,
+    '-V': null,
+    '--help': null,
+    '-h': null,
+    '--version': null,
+    '-v': null,
+    '--init': null,
+    '--force': null,
+    '-f': null,
+    '--ignore-packages': 'package list (comma-separated)',
+    '-I': 'package list (comma-separated)',
+    '--ignore-rules': 'rule IDs (comma-separated)',
+    '-R': 'rule IDs (comma-separated)',
+    '--trust-packages': 'package list (comma-separated)',
+    '-T': 'package list (comma-separated)',
+    '--max-file-size': 'bytes',
+    '--max-depth': 'depth number',
+    '--max-files': 'file count',
+    '--verify-integrity': null,
+  };
+  return requirements[flag] || null;
+}
+
+/**
+ * Get all valid flags (both long and short forms)
+ * @returns {string[]} Array of all valid flag names
+ */
+function getAllValidFlags() {
+  return [
+    '--node-modules',
+    '-n',
+    '--lock',
+    '-l',
+    '--config',
+    '-c',
+    '--json',
+    '--sarif',
+    '--fail-on',
+    '--severity',
+    '-s',
+    '--scan-code',
+    '--check-typosquatting',
+    '--check-lockfile',
+    '--detailed',
+    '--verbose',
+    '-V',
+    '--help',
+    '-h',
+    '--version',
+    '-v',
+    '--init',
+    '--force',
+    '-f',
+    '--ignore-packages',
+    '-I',
+    '--ignore-rules',
+    '-R',
+    '--trust-packages',
+    '-T',
+    '--max-file-size',
+    '--max-depth',
+    '--max-files',
+    '--verify-integrity',
+  ];
+}
+
+/**
+ * Find most similar flags to the given unknown flag
+ * @param {string} unknownFlag - The unknown flag that was provided
+ * @param {number} maxSuggestions - Maximum number of suggestions (default: 2)
+ * @returns {Array<{flag: string, requirement: string|null}>} Array of similar flags with their requirements
+ */
+function findSimilarFlags(unknownFlag, maxSuggestions = 2) {
+  const validFlags = getAllValidFlags();
+  const similarities = validFlags.map(flag => ({
+    flag,
+    requirement: getFlagRequirement(flag),
+    distance: levenshteinDistance(unknownFlag.toLowerCase(), flag.toLowerCase()),
+  }));
+
+  // Sort by distance (lower is better), then by flag length, then alphabetically
+  similarities.sort((a, b) => {
+    if (a.distance !== b.distance) {
+      return a.distance - b.distance;
+    }
+    if (a.flag.length !== b.flag.length) {
+      return a.flag.length - b.flag.length;
+    }
+    return a.flag.localeCompare(b.flag);
+  });
+
+  // Filter out flags that are too different (distance > 50% of longer string length)
+  const maxDistance = Math.max(
+    Math.floor(unknownFlag.length * 0.5),
+    Math.floor(Math.max(...validFlags.map(f => f.length)) * 0.5),
+    3
+  );
+
+  return similarities
+    .filter(item => item.distance <= maxDistance)
+    .slice(0, maxSuggestions)
+    .map(item => ({ flag: item.flag, requirement: item.requirement }));
+}
+
+/**
  * Parse command line arguments
  * @param {string[]} argv - Process arguments (includes node and script path)
  * @returns {Object} Parsed arguments
@@ -259,7 +418,27 @@ function parseArgs(argv) {
 
       default:
         if (arg.startsWith('-')) {
-          throw new Error(`Unknown flag: "${arg}". Use --help to see available options.`);
+          const similarFlags = findSimilarFlags(arg);
+          let errorMsg = `Unknown flag: "${arg}".\nSee \'--help\' for available options.`;
+          
+          if (similarFlags.length > 0) {
+            errorMsg += '\n\nThe most similar flag';
+            if (similarFlags.length === 1) {
+              errorMsg += ' is';
+            } else {
+              errorMsg += 's are';
+            }
+            errorMsg += '\n';
+            for (const { flag, requirement } of similarFlags) {
+              if (requirement) {
+                errorMsg += `        ${flag} <${requirement}>\n`;
+              } else {
+                errorMsg += `        ${flag}\n`;
+              }
+            }
+          }
+          
+          throw new Error(errorMsg);
         }
         break;
     }
@@ -275,4 +454,6 @@ module.exports = {
   parseSeverityFilter,
   parseCommaSeparatedList,
   parseNonNegativeInt,
+  findSimilarFlags,
+  levenshteinDistance,
 };
