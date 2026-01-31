@@ -282,13 +282,13 @@ function generateExampleConfig() {
     trustedPatterns: {
       "custom-build-script": true
     },
-    scanCode: false,
+    scanCode: true,
     checkTyposquatting: false,
     checkLockfile: false,
     failOn: "high",
     severity: ["critical", "high", "medium"],
     format: "text",
-    verbose: false,
+    verbose: true,
     maxFileSizeForCodeScan: 1048576,
     maxNestedDepth: 10,
     maxFilesPerPackage: 0,

@@ -8,6 +8,9 @@ const SEVERITY_ORDER = ['info', 'low', 'medium', 'high', 'critical'];
  * Get color code for severity level
  */
 function colorSeverity(severity) {
+  if (severity === null) {
+    return color('none', colors.dim);
+  }
   switch (severity) {
     case 'critical':
       return color(severity.toUpperCase(), colors.magenta + colors.bold);
@@ -636,6 +639,9 @@ function generateSarifRules() {
  * Map our severity levels to SARIF levels
  */
 function mapSeverityToSarif(severity) {
+  if (severity === null) {
+    return 'none';
+  }
   switch (severity) {
     case 'critical':
     case 'high':
