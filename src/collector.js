@@ -72,17 +72,6 @@ function safeReadJSONWithDetails(filePath, options = {}) {
 }
 
 /**
- * Safely read and parse a JSON file (simplified API)
- * @param {string} filePath - Path to JSON file
- * @returns {Object|null} Parsed JSON or null on error
- * @deprecated Use safeReadJSONWithDetails for better error handling
- */
-function safeReadJSON(filePath) {
-  const result = safeReadJSONWithDetails(filePath);
-  return result.data;
-}
-
-/**
  * Collect all packages from node_modules recursively
  * @param {string} nodeModulesPath - Path to node_modules
  * @param {number} maxDepth - Maximum nesting depth (default: 10)
@@ -289,7 +278,6 @@ function normalizeRepository(repo) {
 module.exports = {
   collectPackages,
   readPackage,
-  safeReadJSON,
   safeReadJSONWithDetails,
   JSON_READ_ERROR,
 };
