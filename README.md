@@ -72,7 +72,10 @@ bun build src/index.js --compile --outfile chain-audit
 ## Quick Start
 
 ```bash
-# Scan current project
+# Recommended: Thorough scan with detailed analysis
+chain-audit --scan-code --detailed
+
+# Scan current project (basic scan)
 chain-audit
 
 # Fail CI on high severity issues
@@ -581,7 +584,7 @@ npm rebuild
 3. **Run in sandboxed CI** – Isolate potentially malicious code
 4. **Combine with npm audit** – chain-audit detects different threats
 5. **Review all findings** – Some may be false positives
-6. **Use `--scan-code` periodically** – More thorough but slower
+6. **Recommended: Use `--scan-code --detailed` for thorough analysis** – Deep code scanning with detailed evidence (slower but most comprehensive)
 7. **Use `--detailed` for manual investigation** – Get code snippets and trust assessment to distinguish false positives (`--verbose` is an alias)
 8. **Keep registry secure** – Use private registry or npm audit signatures
 9. **All packages are checked equally** – No packages are whitelisted by default. Even popular packages like `sharp`, `esbuild`, or `@babel/*` are checked for malicious patterns. This ensures that compromised packages are detected regardless of their reputation.
