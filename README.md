@@ -183,7 +183,7 @@ Issues will be displayed sorted by severity (highest first), then by package nam
 ## Example Output
 
 ```
-chain-audit v0.6.3
+chain-audit v0.6.5
 ────────────────────────────────────────────────────────────
 
 node_modules: /path/to/project/node_modules
