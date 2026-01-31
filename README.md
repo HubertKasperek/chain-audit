@@ -20,7 +20,7 @@
 | Detects obfuscated code | ✅ | ❌ |
 | Zero dependencies | ✅ | N/A |
 | Works offline | ✅ | ❌ |
-| SARIF output (GitHub integration) | ✅ | ❌ |
+| SARIF output (GitHub integration) [experimental] | ✅ | ❌ |
 
 **Use both together** – `npm audit` for known vulnerabilities, `chain-audit` for detecting novel attacks.
 
@@ -84,7 +84,7 @@ chain-audit --severity critical,high --fail-on high
 # JSON output for processing
 chain-audit --json
 
-# SARIF output for GitHub Code Scanning
+# SARIF output for GitHub Code Scanning (experimental)
 chain-audit --sarif > results.sarif
 
 # Deep code analysis (slower but more thorough)
@@ -120,7 +120,7 @@ chain-audit --check-typosquatting
 | `-l, --lock <path>` | Path to lockfile (auto-detects npm, yarn, pnpm, bun) |
 | `-c, --config <path>` | Path to config file (auto-detects if not specified) |
 | `--json` | Output as JSON |
-| `--sarif` | Output as SARIF (for GitHub Code Scanning) |
+| `--sarif` | Output as SARIF (for GitHub Code Scanning) [experimental] |
 | `-s, --severity <levels>` | Show only specified severity levels (comma-separated, e.g., `critical,high`) |
 | `--fail-on <level>` | Exit 1 if max severity >= level |
 | `--scan-code` | Deep scan JS files for suspicious patterns |
@@ -174,7 +174,7 @@ Issues will be displayed sorted by severity (highest first), then by package nam
 ## Example Output
 
 ```
-chain-audit v0.6.2
+chain-audit v0.6.3
 ────────────────────────────────────────────────────────────
 
 node_modules: /path/to/project/node_modules
@@ -336,7 +336,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `checkLockfile` | `boolean` | `false` | Enable lockfile integrity checks (disabled by default due to possible false positives) |
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
-| `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
+| `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` (sarif is experimental) |
 | `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores (Note: CLI flag is `--detailed`, but config uses `verbose` for consistency) |
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
@@ -375,7 +375,7 @@ jobs:
         run: npm rebuild
 ```
 
-### With SARIF Upload (GitHub Code Scanning)
+### With SARIF Upload (GitHub Code Scanning) [experimental]
 
 ```yaml
 name: Security Scan
@@ -430,9 +430,9 @@ jobs:
 
 **Available inputs:**
 - `node-modules-path` (default: `./node_modules`) – Path to node_modules directory
-- `fail-on` (default: `high`) – Severity threshold to fail on (info|low|medium|high|critical)
+- `fail-on` (default: `critical`) – Severity threshold to fail on (info|low|medium|high|critical)
 - `scan-code` (default: `false`) – Enable deep code scanning (slower)
-- `upload-sarif` (default: `true`) – Upload SARIF to GitHub Code Scanning
+- `upload-sarif` (default: `true`) – Upload SARIF to GitHub Code Scanning [experimental]
 
 The reusable workflow automatically uses `--ignore-scripts` for safe installation.
 

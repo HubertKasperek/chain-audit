@@ -87,7 +87,7 @@ function run(argv = process.argv) {
       console.log(color('  scanCode', colors.cyan), '          - Enable deep JS file scanning (slower)');
       console.log(color('  failOn', colors.cyan), '            - Exit 1 when max severity >= level');
       console.log(color('  severity', colors.cyan), '          - Filter to show only specific severity levels');
-      console.log(color('  format', colors.cyan), '            - Output format: text, json, sarif');
+      console.log(color('  format', colors.cyan), '            - Output format: text, json, sarif (experimental)');
       console.log(color('  detailed', colors.cyan), '          - Show detailed analysis (verbose is alias)');
       return { exitCode: 0 };
     } else {
@@ -217,7 +217,7 @@ ${color('OPTIONS:', colors.bold)}
   -c, --config <path>        Path to config file (auto-detects .chainauditrc.json,
                              .chainauditrc, chainaudit.config.json)
   --json                     Output as JSON
-  --sarif                    Output as SARIF (for GitHub Code Scanning)
+  --sarif                    Output as SARIF (for GitHub Code Scanning) [experimental]
   -s, --severity <levels>    Show only specified severity levels (comma-separated)
                              e.g., --severity critical,high or --severity low
   --fail-on <level>          Exit 1 when max severity >= level
