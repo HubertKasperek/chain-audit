@@ -157,11 +157,26 @@ function formatText(issues, summary, context) {
         if (issue.verbose.codeSnippet) {
           lines.push(`    ${color('Code Snippet:', colors.bold)}`);
           const snippetLines = issue.verbose.codeSnippet.split('\n');
+          const isMinified = issue.verbose.isMinified;
+          
           for (const snippetLine of snippetLines) {
             const isHighlighted = snippetLine.startsWith('>>>');
-            lines.push(`      ${isHighlighted ? color(snippetLine, colors.yellow) : color(snippetLine, colors.dim)}`);
+            const isNote = snippetLine.includes('[Minified code') || 
+                          snippetLine.includes('Note:') || 
+                          snippetLine.includes('column') ||
+                          snippetLine.includes('match at');
+            
+            if (isNote) {
+              // Style notes differently - use cyan for informational notes
+              lines.push(`      ${color(snippetLine, colors.cyan + colors.dim)}`);
+            } else if (isHighlighted) {
+              lines.push(`      ${color(snippetLine, colors.yellow)}`);
+            } else {
+              lines.push(`      ${color(snippetLine, colors.dim)}`);
+            }
           }
-          if (issue.verbose.lineNumber) {
+          
+          if (issue.verbose.lineNumber && !isMinified) {
             lines.push(`      ${color(`↑ Line ${issue.verbose.lineNumber}`, colors.cyan)}`);
           }
         }
@@ -170,18 +185,54 @@ function formatText(issues, summary, context) {
         if (issue.verbose.envCodeSnippet) {
           lines.push(`    ${color('Environment Access:', colors.bold)}`);
           const snippetLines = issue.verbose.envCodeSnippet.split('\n');
+          const isMinified = issue.verbose.envIsMinified || false;
+          
           for (const snippetLine of snippetLines) {
             const isHighlighted = snippetLine.startsWith('>>>');
-            lines.push(`      ${isHighlighted ? color(snippetLine, colors.yellow) : color(snippetLine, colors.dim)}`);
+            const isNote = snippetLine.includes('[Minified code') || 
+                          snippetLine.includes('Note:') || 
+                          snippetLine.includes('column') ||
+                          snippetLine.includes('match at');
+            
+            if (isNote) {
+              lines.push(`      ${color(snippetLine, colors.cyan + colors.dim)}`);
+            } else if (isHighlighted) {
+              lines.push(`      ${color(snippetLine, colors.yellow)}`);
+            } else {
+              lines.push(`      ${color(snippetLine, colors.dim)}`);
+            }
+          }
+          
+          if (issue.verbose.envLineNumber && !isMinified) {
+            lines.push(`      ${color(`↑ Line ${issue.verbose.envLineNumber}`, colors.cyan)}`);
           }
         }
         
         if (issue.verbose.networkCodeSnippet) {
-          lines.push(`    ${color('Network Access:', colors.bold)}`);
+          // For env_with_network, this could be network OR exec capability
+          const accessType = issue.reason === 'env_with_network' ? 'Network/Exec Access' : 'Network Access';
+          lines.push(`    ${color(`${accessType}:`, colors.bold)}`);
           const snippetLines = issue.verbose.networkCodeSnippet.split('\n');
+          const isMinified = issue.verbose.networkIsMinified || false;
+          
           for (const snippetLine of snippetLines) {
             const isHighlighted = snippetLine.startsWith('>>>');
-            lines.push(`      ${isHighlighted ? color(snippetLine, colors.yellow) : color(snippetLine, colors.dim)}`);
+            const isNote = snippetLine.includes('[Minified code') || 
+                          snippetLine.includes('Note:') || 
+                          snippetLine.includes('column') ||
+                          snippetLine.includes('match at');
+            
+            if (isNote) {
+              lines.push(`      ${color(snippetLine, colors.cyan + colors.dim)}`);
+            } else if (isHighlighted) {
+              lines.push(`      ${color(snippetLine, colors.yellow)}`);
+            } else {
+              lines.push(`      ${color(snippetLine, colors.dim)}`);
+            }
+          }
+          
+          if (issue.verbose.networkLineNumber && !isMinified) {
+            lines.push(`      ${color(`↑ Line ${issue.verbose.networkLineNumber}`, colors.cyan)}`);
           }
         }
         
@@ -341,6 +392,8 @@ function formatJson(issues, summary, context) {
 /**
  * Format issues as SARIF (Static Analysis Results Interchange Format)
  * Compatible with GitHub Code Scanning
+ * 
+ * @experimental This format is experimental and may change in future versions
  */
 function formatSarif(issues, summary, context) {
   const sarif = {

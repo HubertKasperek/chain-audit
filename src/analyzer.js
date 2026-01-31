@@ -1744,6 +1744,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               codeSnippet: snippet?.snippet || null,
               lineNumber: snippet?.lineNumber || null,
               matchedText: snippet?.matchedText || null,
+              isMinified: snippet?.isMinified || false,
               falsePositiveHints: [
                 isTestFile ? '✓ This appears to be a test file - eval usage for mocking is common' : null,
                 isMinifiedOrBundled ? '✓ This appears to be a minified/bundled file - eval patterns may be false positives' : null,
@@ -1876,6 +1877,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               codeSnippet: snippet?.snippet || null,
               lineNumber: snippet?.lineNumber || null,
               matchedText: snippet?.matchedText || null,
+              isMinified: snippet?.isMinified || false,
               falsePositiveHints: [
                 isBuildFile ? '✓ This appears to be a build file - child_process usage is common' : null,
                 'Build tools commonly use child_process (webpack, babel plugins)',
@@ -1944,6 +1946,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               codeSnippet: snippet?.snippet || null,
               lineNumber: snippet?.lineNumber || null,
               matchedText: snippet?.matchedText || null,
+              isMinified: snippet?.isMinified || false,
               falsePositiveHints: [
                 'SSH/Git tools may legitimately access ~/.ssh',
                 'AWS SDK wrappers may check ~/.aws for config',
@@ -2032,6 +2035,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 codeSnippet: snippet?.snippet || null,
                 lineNumber: snippet?.lineNumber || null,
                 matchedText: snippet?.matchedText || null,
+                isMinified: snippet?.isMinified || false,
                 falsePositiveHints: [
                   isTestFile ? '✓ This appears to be a test file - network mocking is common' : null,
                   'HTTP client libraries (axios, got, fetch) are common',
@@ -2210,21 +2214,60 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             }
           }
           
-          // Determine severity based on context
-          // Install scripts often legitimately use env + network (downloading binaries)
-          // But we still flag them - user should review, but with lower severity
+          // Analyze context: is env actually passed to network/exec, or just used locally?
+          // Use broader context for analysis (envContext was already defined earlier, but we need more context)
+          const broaderEnvContext = content.slice(Math.max(0, envMatchIndex - 150), Math.min(content.length, envMatchIndex + 300));
+          const envPassedToExec = /(?:env|process\.env).*[:=].*(?:spawn|exec|fork|child_process)/i.test(broaderEnvContext) ||
+                                  /(?:spawn|exec|fork).*\{[^}]*env/i.test(broaderEnvContext) ||
+                                  /(?:spawn|exec|fork).*\{[^}]*\.\.\.process\.env/i.test(broaderEnvContext);
+          
+          // Check if env is used only for local config (less suspicious)
+          const envUsedLocally = /process\.env\.(?:NODE_ENV|DEBUG|CI|FORCE_COLOR|NO_COLOR|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD|HADOOP_HOME|LIBC|FORMAT_START)/i.test(envContext);
+          
+          // Check if it's just passing entire process.env to child_process (common pattern)
+          const passesFullEnv = /(?:env|process\.env).*[:=].*process\.env|\.\.\.process\.env/i.test(broaderEnvContext);
+          
+          // Determine severity based on context - no package is trusted by default
+          // CRITICAL: If there's network access, always critical (most dangerous pattern)
+          // This is the Shai-Hulud 2.0 attack pattern: env + network + exec
           let severity = 'critical';
-          if (isInstallScriptFile) {
-            severity = 'medium'; // Install scripts are less suspicious, but still worth reviewing
+          
+          // Only lower severity if there's NO network access (only child_process)
+          // If network is present, it's always critical - could be exfiltrating credentials
+          const hasNetwork = networkMatch || nodeNetworkMatch;
+          
+          if (hasNetwork) {
+            // env + network + exec = CRITICAL (supply chain attack pattern)
+            severity = 'critical';
+          } else if (isInstallScriptFile) {
+            // Install scripts with env + child_process (no network) - medium
+            severity = 'medium';
+          } else if (envUsedLocally && !envPassedToExec && childProcessMatch) {
+            // If env is only used locally (like NODE_ENV) and only child_process (no network), lower severity
+            severity = 'medium';
+          } else if (passesFullEnv && childProcessMatch) {
+            // Passing full process.env to child_process is common pattern, but still review
+            severity = 'medium';
+          }
+          // Otherwise: env + child_process (unknown pattern) = critical
+          
+          // Determine recommendation based on severity
+          let recommendation;
+          if (hasNetwork) {
+            recommendation = 'DANGER: This pattern (env + network + exec) matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.';
+          } else if (isInstallScriptFile) {
+            recommendation = 'Install scripts often use env vars + child_process. Review to ensure it\'s legitimate and not exfiltrating data.';
+          } else if (severity === 'medium') {
+            recommendation = 'This pattern (env + child_process, no network) can be legitimate. Review to ensure env vars are not being exfiltrated through child processes.';
+          } else {
+            recommendation = 'DANGER: This pattern matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.';
           }
           
           const issue = {
             severity: severity,
             reason: 'env_with_network',
             detail: `File "${relativePath}" accesses environment variables and has network/exec capabilities`,
-            recommendation: isInstallScriptFile 
-              ? 'Install scripts often use env vars + network to download binaries. Review to ensure it\'s legitimate.'
-              : 'DANGER: This pattern matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.',
+            recommendation: recommendation,
           };
           
           if (verbose) {
@@ -2232,6 +2275,9 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             const networkSnippet = nodeNetworkMatch 
               ? extractCodeSnippet(content, nodeNetworkMatch, 3)
               : (networkMatch ? extractCodeSnippet(content, networkMatch, 3) : null);
+            
+            // If no network snippet but we have child_process, use that as exec capability
+            const execSnippet = networkSnippet || (childProcessMatch ? extractCodeSnippet(content, childProcessMatch, 3) : null);
             
             const envMatches = findAllMatches(content, envMatch, 5);
             
@@ -2246,17 +2292,25 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               },
               envCodeSnippet: envSnippet?.snippet || null,
               envLineNumber: envSnippet?.lineNumber || null,
-              networkCodeSnippet: networkSnippet?.snippet || null,
-              networkLineNumber: networkSnippet?.lineNumber || null,
+              envIsMinified: envSnippet?.isMinified || false,
+              networkCodeSnippet: execSnippet?.snippet || null,
+              networkLineNumber: execSnippet?.lineNumber || null,
+              networkIsMinified: execSnippet?.isMinified || false,
               falsePositiveHints: [
-                isInstallScriptFile ? '⚠ This appears to be an install script - may legitimately download binaries' : null,
-                '⚠ This is a HIGH-RISK pattern matching known attacks',
+                hasNetwork ? '⚠ CRITICAL: matches Shai-Hulud 2.0 attack pattern' : null,
+                isInstallScriptFile ? '⚠ This appears to be an install script - may legitimately use child_process' : null,
+                !hasNetwork && envUsedLocally && !envPassedToExec ? '✓ Environment variables appear to be used only for local configuration (no network detected)' : null,
+                !hasNetwork && passesFullEnv ? '✓ Passing full process.env to child_process is a common pattern (but still review - no network detected)' : null,
+                severity === 'critical' ? '⚠ This is a HIGH-RISK pattern matching known attacks' : null,
                 'Legitimate uses: reading config from env for API calls, install scripts downloading binaries',
                 'Check what env vars are accessed and where data is sent',
+                hasNetwork ? '⚠ Network access combined with env + exec = potential credential exfiltration' : null,
               ].filter(Boolean),
-              riskAssessment: isInstallScriptFile 
-                ? 'MEDIUM - Install scripts often use env + network legitimately, but should be reviewed'
-                : 'CRITICAL - Matches Shai-Hulud 2.0 and similar attack patterns',
+              riskAssessment: hasNetwork || severity === 'critical'
+                ? 'CRITICAL - matches Shai-Hulud 2.0 and similar attack patterns'
+                : isInstallScriptFile 
+                ? 'MEDIUM - Install scripts often use env + child_process legitimately, but should be reviewed'
+                : 'MEDIUM - Pattern can be legitimate (no network detected), review to ensure no credential exfiltration',
               attackPattern: 'Environment variable access combined with network/exec = potential credential exfiltration',
             };
           }
@@ -2362,6 +2416,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 },
                 codeSnippet: snippet?.snippet || null,
                 lineNumber: snippet?.lineNumber || null,
+                isMinified: snippet?.isMinified || false,
                 falsePositiveHints: [
                   isMinifiedFile ? '✓ This appears to be a minified file - obfuscation patterns are expected' : null,
                   isLikelyMinified ? '✓ This file appears to be minified - skipping' : null,
@@ -2483,6 +2538,30 @@ function truncate(str, maxLen) {
 }
 
 /**
+ * Check if a line appears to be minified code
+ * @param {string} line - Line of code to check
+ * @returns {boolean} True if line appears minified
+ */
+function isMinifiedLine(line) {
+  // Minified code typically has:
+  // - Very long lines (>500 chars)
+  // - Very few spaces (dense code)
+  // - No comments
+  // - Dense character usage
+  if (line.length < 500) return false;
+  
+  // Check if line has very few spaces relative to its length
+  const spaceRatio = (line.match(/\s/g) || []).length / line.length;
+  // Minified code usually has < 5% whitespace
+  if (spaceRatio < 0.05) return true;
+  
+  // Check if line has no typical formatting (no indentation, no line breaks in strings)
+  if (line.length > 1000 && !line.includes('\n') && spaceRatio < 0.1) return true;
+  
+  return false;
+}
+
+/**
  * Extract code snippet with context around a match
  * @param {string} content - Full file content
  * @param {RegExp} pattern - Pattern to find
@@ -2495,6 +2574,51 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(pattern);
     if (match) {
+      const isMinified = isMinifiedLine(lines[i]);
+      
+      if (isMinified) {
+        // For minified code, show a truncated snippet around the match
+        const matchIndex = match.index;
+        const matchLength = match[0].length;
+        const line = lines[i];
+        
+        // Extract context around the match (150 chars before, 150 after)
+        const contextBefore = 150;
+        const contextAfter = 150;
+        const start = Math.max(0, matchIndex - contextBefore);
+        const end = Math.min(line.length, matchIndex + matchLength + contextAfter);
+        
+        const beforeText = start > 0 ? '...' : '';
+        const afterText = end < line.length ? '...' : '';
+        const snippetText = beforeText + line.slice(start, end) + afterText;
+        
+        // Calculate the position of the match marker in the snippet
+        // The match position relative to the snippet start
+        const matchPosInSnippet = (start > 0 ? 3 : 0) + (matchIndex - start); // 3 for "..."
+        const linePrefix = `>>>     ${i + 1} | `;
+        const markerPadding = linePrefix.length + matchPosInSnippet;
+        
+        const snippetLines = [];
+        snippetLines.push(`${linePrefix}${snippetText}`);
+        // Add marker pointing to the match (limit to reasonable length)
+        const markerChars = Math.min(matchLength, 15);
+        const markerLine = '        ' + ' '.repeat(markerPadding) + 
+                          '^'.repeat(markerChars) + 
+                          ` (column ${matchIndex + 1})`;
+        snippetLines.push(markerLine);
+        snippetLines.push(`        [Minified code - showing context around match only]`);
+        
+        return {
+          lineNumber: i + 1,
+          column: matchIndex + 1,
+          matchedText: match[0],
+          snippet: snippetLines.join('\n'),
+          lineContent: line.length > 150 ? line.slice(0, 150) + '...' : line,
+          isMinified: true,
+        };
+      }
+      
+      // Normal code - show context lines
       const startLine = Math.max(0, i - contextLines);
       const endLine = Math.min(lines.length - 1, i + contextLines);
       
@@ -2502,7 +2626,12 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
       for (let j = startLine; j <= endLine; j++) {
         const lineNum = String(j + 1).padStart(4, ' ');
         const marker = j === i ? '>>>' : '   ';
-        snippetLines.push(`${marker} ${lineNum} | ${lines[j]}`);
+        // Truncate very long lines even in normal code (but less aggressively)
+        let lineText = lines[j];
+        if (lineText.length > 300) {
+          lineText = lineText.slice(0, 297) + '...';
+        }
+        snippetLines.push(`${marker} ${lineNum} | ${lineText}`);
       }
       
       return {
@@ -2510,7 +2639,8 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
         column: match.index + 1,
         matchedText: match[0],
         snippet: snippetLines.join('\n'),
-        lineContent: lines[i],
+        lineContent: lines[i].length > 200 ? lines[i].slice(0, 200) + '...' : lines[i],
+        isMinified: false,
       };
     }
   }

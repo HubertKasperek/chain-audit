@@ -17,7 +17,7 @@ const DEFAULT_CONFIG = {
   checkLockfile: false,        // Lockfile integrity checks (disabled by default due to false positives)
   failOn: null,
   severity: null,      // Array of severity levels to show (e.g., ['critical', 'high'])
-  format: 'text',      // Output format: 'text', 'json', 'sarif'
+  format: 'text',      // Output format: 'text', 'json', 'sarif' (sarif is experimental)
   verbose: false,      // Show detailed analysis
   // Known legitimate packages with install scripts
   // NOTE: Whitelist cleared - all packages are now checked without exceptions.
