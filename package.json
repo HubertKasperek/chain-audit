@@ -1,7 +1,7 @@
 {
   "name": "chain-audit",
   "version": "0.6.3",
-  "description": "Fast, zero-dependency CLI to detect supply chain attacks in node_modules. Scans for malicious install scripts, typosquatting, extraneous packages, and suspicious code patterns.",
+  "description": "Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules. Scans for malicious install scripts, typosquatting, extraneous packages, lockfile integrity, obfuscated code, executable files, and suspicious code patterns.",
   "main": "src/index.js",
   "bin": {
     "chain-audit": "src/index.js"
@@ -31,17 +31,12 @@
   "keywords": [
     "security",
     "supply-chain",
-    "supply-chain-attack",
-    "node-modules",
-    "audit",
-    "malware",
     "dependency",
-    "npm-audit",
-    "postinstall",
-    "typosquatting",
-    "ci",
-    "github-actions",
-    "sarif"
+    "heuristic-scanner",
+    "lockfile",
+    "obfuscation",
+    "static-analysis",
+    "ci"
   ],
   "author": "Hubert Kasperek",
   "license": "MIT",

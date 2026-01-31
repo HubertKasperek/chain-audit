@@ -5,7 +5,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/chain-audit.svg)](https://nodejs.org)
 
-**Fast, zero-dependency CLI to detect supply chain attacks in `node_modules`.**
+**Fast, zero-dependency heuristic scanner CLI to detect supply chain attacks in `node_modules`.**
+
+> **Disclaimer:** chain-audit is a **heuristic scanner** that searches for suspicious patterns in code. It does **not** detect 100% confirmed attacks, but rather flags potentially suspicious behavior that requires **human analysis**. The tool may produce **false positives** (flagging legitimate code as suspicious) and **false negatives** (missing real attacks). It's up to you to review and determine whether findings are actually suspicious or legitimate. Always investigate findings before taking action.  
+> This is a hobby project licensed under **MIT License**, provided "AS IS" without warranty of any kind.
 
 ---
 
@@ -22,7 +25,7 @@
 | Works offline | ✅ | ❌ |
 | SARIF output (GitHub integration) [experimental] | ✅ | ❌ |
 
-**Use both together** – `npm audit` for known vulnerabilities, `chain-audit` for detecting novel attacks.
+**Use both together** – `npm audit` for known vulnerabilities, `chain-audit` (heuristic scanner) for detecting novel attacks and suspicious patterns.
 
 ## Installation
 
@@ -611,7 +614,13 @@ Hubert Kasperek
 
 ---
 
-**Disclaimer:** chain-audit is a heuristic scanner created for **educational and research purposes**, provided "AS IS" without warranty of any kind. It may produce false positives and **cannot catch all attacks**.
+**Disclaimer:** chain-audit is a **hobby project** and **heuristic scanner** created for **educational and research purposes**, licensed under **MIT License**, provided "AS IS" without warranty of any kind. The author makes no guarantees about the tool's accuracy, completeness, or reliability. 
+
+**Important limitations:**
+- chain-audit does **not** detect 100% confirmed attacks – it scans code for suspicious patterns
+- It may produce **many false positives** – findings require human analysis to determine if they're actually suspicious
+- It **cannot catch all attacks** – sophisticated or novel attack patterns may be missed
+- The tool flags potentially suspicious behavior, but **you are responsible** for reviewing and validating all findings
 
 **The author takes no responsibility for:**
 - False positives or false negatives in detection

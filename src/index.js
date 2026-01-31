@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * chain-audit - Supply chain attack scanner for node_modules
+ * chain-audit - Supply chain attack heuristic scanner for node_modules
  * 
  * Detects suspicious patterns in dependencies including:
  * - Malicious install scripts
@@ -204,7 +204,7 @@ function matchPattern(pattern, name) {
 
 function printHelp() {
   const text = `
-${color('chain-audit', colors.bold)} - Supply chain attack scanner for node_modules
+${color('chain-audit', colors.bold)} - Supply chain attack heuristic scanner for node_modules
 
 ${color('USAGE:', colors.bold)}
   chain-audit [options]
@@ -302,7 +302,8 @@ ${color('CONFIGURATION:', colors.bold)}
   }
 
 ${color('DISCLAIMER:', colors.bold)}
-  This tool is provided "AS IS" without warranty. The author takes no
+  This is a hobby project licensed under MIT License, provided "AS IS"
+  without warranty. The author makes no guarantees and takes no
   responsibility for false positives, false negatives, missed attacks, or
   any damages resulting from use of this tool. Use at your own risk.
   Always review findings manually and use as part of defense-in-depth.

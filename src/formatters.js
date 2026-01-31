@@ -298,6 +298,9 @@ function formatText(issues, summary, context) {
   lines.push(color('─'.repeat(60), colors.dim));
   lines.push(color('chain-audit by Hubert Kasperek • MIT License', colors.dim));
   lines.push(color('https://github.com/hukasx0/chain-audit', colors.dim));
+  lines.push('');
+  lines.push(color('⚠️  Disclaimer: This is a hobby project provided "AS IS" without warranty.', colors.dim));
+  lines.push(color('    The author makes no guarantees. Review all findings manually.', colors.dim));
 
   return lines.join('\n');
 }
