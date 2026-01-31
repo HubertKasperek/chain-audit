@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/chain-audit.svg)](https://nodejs.org)
 
-**Fast, zero-dependency heuristic scanner CLI to detect supply chain attacks in `node_modules`.**
+**Zero-dependency heuristic scanner CLI to detect supply chain attacks in `node_modules`.**
 
 > **Disclaimer:** chain-audit is a **heuristic scanner** that searches for suspicious patterns in code. It does **not** detect 100% confirmed attacks, but rather flags potentially suspicious behavior that requires **human analysis**. The tool may produce **false positives** (flagging legitimate code as suspicious) and **false negatives** (missing real attacks). It's up to you to review and determine whether findings are actually suspicious or legitimate. Always investigate findings before taking action.  
 > Licensed under **MIT License**, provided "AS IS" without warranty of any kind.

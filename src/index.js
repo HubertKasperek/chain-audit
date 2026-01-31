@@ -204,7 +204,7 @@ function matchPattern(pattern, name) {
 
 function printHelp() {
   const text = `
-${color('chain-audit', colors.bold)} - Supply chain attack heuristic scanner for node_modules
+${color('chain-audit', colors.bold)} - Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules
 
 ${color('USAGE:', colors.bold)}
   chain-audit [options]

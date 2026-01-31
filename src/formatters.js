@@ -43,6 +43,7 @@ function formatText(issues, summary, context) {
   ].filter(Boolean).join(' ');
   
   lines.push(header);
+  lines.push(color('Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules', colors.dim));
   lines.push(color('─'.repeat(60), colors.dim));
   lines.push('');
 
