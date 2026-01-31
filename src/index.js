@@ -291,15 +291,21 @@ ${color('EXAMPLES:', colors.bold)}
 ${color('CONFIGURATION:', colors.bold)}
   Create a config file in your project root:
   (.chainauditrc.json, .chainauditrc, or chainaudit.config.json)
+  
+  Example (simplified):
   {
     "ignoredPackages": ["@types/*"],
     "ignoredRules": ["native_binary"],
     "trustedPackages": ["my-native-addon"],
-    "scanCode": false,
+    "scanCode": true,
+    "verbose": true,
     "failOn": "high",
     "verifyIntegrity": false,
-    "maxFilesPerPackage": 0
+    "maxFilesPerPackage": 0,
+    "format": "text"
   }
+  
+  For full config with all options, use: ${color('chain-audit --init', colors.cyan)}
 
 ${color('DISCLAIMER:', colors.bold)}
   Licensed under MIT License, provided "AS IS" without warranty.

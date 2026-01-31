@@ -318,13 +318,13 @@ Alternatively, you can manually create a config file in your project root. Suppo
     "prebuild-install": true,
     "node-pre-gyp": true
   },
-  "scanCode": false,
+  "scanCode": true,
   "checkTyposquatting": false,
   "checkLockfile": false,
   "failOn": "high",
   "severity": ["critical", "high"],
   "format": "text",
-  "verbose": false,
+  "verbose": true,
   "maxFileSizeForCodeScan": 1048576,
   "maxNestedDepth": 10,
   "maxFilesPerPackage": 0,
@@ -340,13 +340,13 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `ignoredRules` | `string[]` | `[]` | Rule IDs to ignore |
 | `trustedPackages` | `string[]` | `[]` | Packages with reduced severity for install scripts (empty by default - all packages are checked) |
 | `trustedPatterns` | `object` | `{node-gyp rebuild: true, ...}` | Install script patterns considered safe |
-| `scanCode` | `boolean` | `false` | Enable deep code scanning by default |
+| `scanCode` | `boolean` | `false` | Enable deep code scanning (default: `false` without config, `true` when generated with `--init`) |
 | `checkTyposquatting` | `boolean` | `false` | Enable typosquatting detection (disabled by default to reduce false positives) |
 | `checkLockfile` | `boolean` | `false` | Enable lockfile integrity checks (disabled by default due to possible false positives) |
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
 | `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` (sarif is experimental) |
-| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores (Note: CLI flag is `--detailed`, but config uses `verbose` for consistency) |
+| `verbose` | `boolean` | `false` | Show detailed analysis with code snippets and trust scores (default: `false` without config, `true` when generated with `--init`). Note: CLI flag is `--detailed`, but config uses `verbose` for consistency |
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
 | `maxFilesPerPackage` | `number` | `0` | Max JS files to scan per package (0 = unlimited) |
