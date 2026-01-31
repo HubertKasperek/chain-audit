@@ -302,11 +302,11 @@ ${color('CONFIGURATION:', colors.bold)}
   }
 
 ${color('DISCLAIMER:', colors.bold)}
-  This is a hobby project licensed under MIT License, provided "AS IS"
-  without warranty. The author makes no guarantees and takes no
-  responsibility for false positives, false negatives, missed attacks, or
-  any damages resulting from use of this tool. Use at your own risk.
-  Always review findings manually and use as part of defense-in-depth.
+  Licensed under MIT License, provided "AS IS" without warranty.
+  The author makes no guarantees and takes no responsibility for false
+  positives, false negatives, missed attacks, or any damages resulting
+  from use of this tool. Use at your own risk. Always review findings
+  manually and use as part of defense-in-depth.
 
 ${color('MORE INFO:', colors.bold)}
   https://github.com/hukasx0/chain-audit

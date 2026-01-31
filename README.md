@@ -8,7 +8,7 @@
 **Fast, zero-dependency heuristic scanner CLI to detect supply chain attacks in `node_modules`.**
 
 > **Disclaimer:** chain-audit is a **heuristic scanner** that searches for suspicious patterns in code. It does **not** detect 100% confirmed attacks, but rather flags potentially suspicious behavior that requires **human analysis**. The tool may produce **false positives** (flagging legitimate code as suspicious) and **false negatives** (missing real attacks). It's up to you to review and determine whether findings are actually suspicious or legitimate. Always investigate findings before taking action.  
-> This is a hobby project licensed under **MIT License**, provided "AS IS" without warranty of any kind.
+> Licensed under **MIT License**, provided "AS IS" without warranty of any kind.
 
 ---
 
@@ -617,7 +617,7 @@ Hubert Kasperek
 
 ---
 
-**Disclaimer:** chain-audit is a **hobby project** and **heuristic scanner** created for **educational and research purposes**, licensed under **MIT License**, provided "AS IS" without warranty of any kind. The author makes no guarantees about the tool's accuracy, completeness, or reliability. 
+**Disclaimer:** chain-audit is a **heuristic scanner** created for **educational and research purposes**, licensed under **MIT License**, provided "AS IS" without warranty of any kind. The author makes no guarantees about the tool's accuracy, completeness, or reliability. 
 
 **Important limitations:**
 - chain-audit does **not** detect 100% confirmed attacks – it scans code for suspicious patterns
