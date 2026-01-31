@@ -18,12 +18,12 @@ const path = require('path');
 const { parseArgs } = require('./cli');
 const { loadConfig, mergeConfig, initConfig } = require('./config');
 const { buildLockIndex } = require('./lockfile');
-const { collectPackages, safeReadJSON } = require('./collector');
+const { collectPackages, safeReadJSONWithDetails } = require('./collector');
 const { analyzePackage } = require('./analyzer');
 const { formatText, formatJson, formatSarif } = require('./formatters');
 const { color, colors } = require('./utils');
 
-const pkgMeta = safeReadJSON(path.join(__dirname, '..', 'package.json')) || {};
+const pkgMeta = (safeReadJSONWithDetails(path.join(__dirname, '..', 'package.json')).data) || {};
 
 function detectDefaultLockfile(cwd) {
   const candidates = [
@@ -81,7 +81,7 @@ function run(argv = process.argv) {
       console.log(color('✓', colors.green), result.message);
       console.log('\nConfiguration options:');
       console.log(color('  ignoredPackages', colors.cyan), '  - Packages to skip during analysis (supports glob patterns)');
-      console.log(color('  ignoredRules', colors.cyan), '     - Rule IDs to ignore (e.g., "native_binary")');
+      console.log(color('  ignoredRules', colors.cyan), '     - Rule IDs to ignore (e.g., "native_binary,executable_files")');
       console.log(color('  trustedPackages', colors.cyan), '  - Known legitimate packages with install scripts');
       console.log(color('  trustedPatterns', colors.cyan), '  - Patterns that reduce severity for known use cases');
       console.log(color('  scanCode', colors.cyan), '          - Enable deep JS file scanning (slower)');

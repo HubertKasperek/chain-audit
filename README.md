@@ -97,7 +97,7 @@ chain-audit --detailed --scan-code
 chain-audit --detailed --json --scan-code
 
 # Ignore specific packages and rules
-chain-audit --ignore-packages "@types/*" --ignore-rules native_binary
+chain-audit --ignore-packages "@types/*" --ignore-rules native_binary,executable_files
 
 # Additional structure integrity checks
 chain-audit --verify-integrity --fail-on high
@@ -131,7 +131,7 @@ chain-audit --check-typosquatting
 | `-f, --force` | Force overwrite existing config file (use with `--init`) |
 | **Filtering Options** | |
 | `-I, --ignore-packages <list>` | Ignore packages (comma-separated, supports globs, e.g., `@types/*,lodash`) |
-| `-R, --ignore-rules <list>` | Ignore rule IDs (comma-separated, e.g., `native_binary,install_script`) |
+| `-R, --ignore-rules <list>` | Ignore rule IDs (comma-separated, e.g., `native_binary,executable_files,install_script`) |
 | `-T, --trust-packages <list>` | Trust packages (comma-separated, supports globs, e.g., `esbuild,@swc/*`) |
 | **Scan Options** | |
 | `--max-file-size <bytes>` | Max file size to scan (default: 1048576 = 1MB) |
@@ -524,9 +524,10 @@ chain-audit automatically detects and parses:
 - **child_process_usage** – Code uses child_process module
 - **node_network_access** – Code uses Node.js network APIs (fetch, https, axios)
 - **git_operation_install** – Install script performs git operations
+- **executable_files** – Contains executable files (shell scripts, etc.) - high if outside bin/, medium if in bin/
 
 ### Low/Info Severity
-- **native_binary** – Contains .node, .so, .dll, .dylib, .exe files
+- **native_binary** – Contains native module binaries (.node, .so, .dylib files)
 - **no_repository** – No repository URL in package.json
 - **minimal_metadata** – Very short/missing description
 

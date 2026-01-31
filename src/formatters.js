@@ -536,8 +536,15 @@ function generateSarifRules() {
       id: 'native_binary',
       name: 'NativeBinary',
       shortDescription: { text: 'Contains native binaries' },
-      fullDescription: { text: 'Package contains native binary files (.node, .so, .dll, .dylib)' },
+      fullDescription: { text: 'Package contains native module binary files (.node, .so, .dylib)' },
       defaultConfiguration: { level: 'note' },
+    },
+    {
+      id: 'executable_files',
+      name: 'ExecutableFiles',
+      shortDescription: { text: 'Contains executable files' },
+      fullDescription: { text: 'Package contains executable files (shell scripts, etc.) that may indicate supply chain attacks' },
+      defaultConfiguration: { level: 'warning' },
     },
     {
       id: 'potential_typosquat',

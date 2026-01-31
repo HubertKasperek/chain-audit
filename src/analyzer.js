@@ -164,9 +164,10 @@ const OBFUSCATION_PATTERNS = [
 ];
 
 /**
- * Native binary extensions
+ * Native binary extensions (legitimate native modules)
+ * Note: .exe and .dll are checked separately as executable_files (high severity)
  */
-const NATIVE_EXTENSIONS = ['.node', '.so', '.dll', '.dylib', '.exe'];
+const NATIVE_EXTENSIONS = ['.node', '.so', '.dylib'];
 
 /**
  * Git/version control patterns (lower risk but worth noting)
@@ -243,6 +244,9 @@ function analyzePackage(pkg, lockIndex, config = {}) {
 
   // 4. Check for native binaries
   checkNativeBinaries(pkg, issues, verbose);
+
+  // 4.5. Check for executable files (shell scripts, etc.) - potential supply chain attack
+  checkExecutableFiles(pkg, issues, verbose, config);
 
   // 5. Check for typosquatting (optional, enabled with --check-typosquatting)
   if (config.checkTyposquatting) {
@@ -1028,6 +1032,177 @@ function findNativeArtifacts(pkgDir, maxDepth = 3) {
 }
 
 /**
+ * Check for executable files (shell scripts, etc.) - potential supply chain attack
+ * 
+ * NOTE: All packages are checked. Users can ignore this rule for specific packages
+ * using --ignore-rules executable_files or by configuring ignoredRules in .chainauditrc.json
+ */
+function checkExecutableFiles(pkg, issues, verbose = false, config = {}) {
+  // Check if this rule is ignored
+  if (config.ignoredRules && config.ignoredRules.includes('executable_files')) {
+    return;
+  }
+  const found = findExecutableFiles(pkg.dir, 5);
+  
+  if (found.length > 0) {
+    // Check if files are in bin/ directory (expected) or root/other locations (suspicious)
+    const binFiles = found.filter(f => /^bin\//i.test(path.relative(pkg.dir, f)));
+    const suspiciousFiles = found.filter(f => !/^bin\//i.test(path.relative(pkg.dir, f)));
+    
+    // Determine severity:
+    // - HIGH: files outside bin/ (very suspicious - matches attack patterns)
+    // - LOW: all files in bin/ (less suspicious - some packages use shell scripts for installation)
+    const severity = suspiciousFiles.length > 0 ? 'high' : 'low';
+    
+    const listed = found.slice(0, 5).map(p => {
+      const relPath = path.relative(pkg.dir, p);
+      return relPath;
+    }).join(', ');
+    
+    const issue = {
+      severity: severity,
+      reason: 'executable_files',
+      detail: `Contains executable files (shell scripts, etc.): ${listed}${found.length > 5 ? `, +${found.length - 5} more` : ''}`,
+      recommendation: suspiciousFiles.length > 0
+        ? 'Executable files outside bin/ directory are suspicious and may indicate a supply chain attack. Review immediately.'
+        : 'Shell scripts in bin/ directory are less suspicious but should be reviewed for malicious content.',
+    };
+    
+    if (verbose) {
+      issue.verbose = {
+        evidence: {
+          executableCount: found.length,
+          binFilesCount: binFiles.length,
+          suspiciousFilesCount: suspiciousFiles.length,
+          executableFiles: found.map(f => {
+            const relPath = path.relative(pkg.dir, f);
+            const isInBin = /^bin\//i.test(relPath);
+            return {
+              path: f,
+              relativePath: relPath,
+              filename: path.basename(f),
+              extension: path.extname(f),
+              isInBin: isInBin,
+              isSuspicious: !isInBin,
+            };
+          }),
+        },
+        falsePositiveHints: [
+          suspiciousFiles.length > 0 ? '⚠ Executable files outside bin/ are highly suspicious' : null,
+          'Shell scripts (.sh) in npm packages are unusual and should be reviewed',
+          'Check if executables are necessary for package functionality',
+          'Review executable content for malicious code (network access, credential exfiltration)',
+          binFiles.length > 0 && suspiciousFiles.length === 0 ? '✓ Shell scripts in bin/ are less suspicious (some packages use them for installation)' : null,
+          'To ignore this check for specific packages, use --ignore-rules executable_files',
+        ].filter(Boolean),
+        riskAssessment: suspiciousFiles.length > 0
+          ? 'HIGH - Executable files outside bin/ match supply chain attack patterns'
+          : 'LOW - Shell scripts in bin/ are less suspicious but should be reviewed',
+        attackPattern: 'Executable files (especially .sh scripts) in npm packages can be used for supply chain attacks',
+      };
+    }
+    
+    issues.push(issue);
+  }
+}
+
+/**
+ * Find executable files in package (shell scripts, PowerShell, binaries, etc.)
+ * Note: .js files are scanned by code scanner, not flagged here
+ */
+function findExecutableFiles(pkgDir, maxDepth = 5) {
+  const found = [];
+  const stack = [{ dir: pkgDir, depth: 0 }];
+  
+  // Executable file extensions - only real executables, not .js (those are scanned by code scanner)
+  const EXECUTABLE_EXTENSIONS = [
+    // Shell scripts
+    '.sh', '.bash', '.zsh', '.fish', '.csh', '.tcsh', '.ksh',
+    // PowerShell
+    '.ps1', '.psm1', '.psd1',
+    // Windows batch
+    '.bat', '.cmd', '.com',
+    // Binaries (executables)
+    '.exe', '.bin',
+    // Other scripts
+    '.py', '.pl', '.rb', '.php', '.r', '.lua',
+  ];
+
+  while (stack.length > 0) {
+    const { dir, depth } = stack.pop();
+    if (depth > maxDepth) continue;
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      // Skip common directories that shouldn't be checked
+      if (entry.name.startsWith('.') || 
+          entry.name === 'node_modules' ||
+          entry.name === '.git') {
+        continue;
+      }
+      
+      const fullPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory()) {
+        stack.push({ dir: fullPath, depth: depth + 1 });
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        
+        // Check by extension - only real executables, not .js files
+        // .js files are already scanned by code scanner
+        if (EXECUTABLE_EXTENSIONS.includes(ext)) {
+          found.push(fullPath);
+          continue;
+        }
+        
+        // Check for files without extension that are executable
+        // Only flag if they have shebang (not just chmod +x, which can be accidental)
+        // Skip known text files (LICENSE, README, CHANGELOG, etc.)
+        if (ext === '') {
+          const filename = entry.name.toUpperCase();
+          const knownTextFiles = ['LICENSE', 'LICENCE', 'README', 'CHANGELOG', 'HISTORY', 'AUTHORS', 'CONTRIBUTORS', 'NOTICE', 'COPYING', 'INSTALL', 'MAKEFILE', 'MAKEFILE.IN'];
+          
+          // Skip known text files
+          if (knownTextFiles.some(tf => filename === tf || filename.startsWith(tf + '.'))) {
+            continue;
+          }
+          
+          // Check if file has execute permission AND shebang (not just chmod +x)
+          try {
+            const stat = fs.statSync(fullPath);
+            if ((stat.mode & 0o111) !== 0) {
+              // File is executable - check if it has shebang (real executable script)
+              try {
+                const content = fs.readFileSync(fullPath, 'utf8');
+                const firstLine = content.split('\n')[0];
+                // Only flag if it has shebang (#!/bin/bash, #!/usr/bin/env python, etc.)
+                if (/^#!/.test(firstLine)) {
+                  found.push(fullPath);
+                }
+              } catch {
+                // If we can't read content, skip (might be binary)
+                continue;
+              }
+            }
+          } catch {
+            // Skip files we can't check
+            continue;
+          }
+        }
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
  * Trusted npm organizations/scopes (official packages, not typosquatting)
  * 
  * NOTE: Whitelist cleared - all packages are now checked without exceptions.
@@ -1610,8 +1785,8 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           // Check if "eval" is part of a longer word (not a function call)
           const matchText = patternMatch[0];
           const matchIndex = patternMatch.index;
-          const beforeMatch = content.slice(Math.max(0, matchIndex - 20), matchIndex);
-          const afterMatch = content.slice(matchIndex + matchText.length, matchIndex + matchText.length + 20);
+          const beforeMatch = content.slice(Math.max(0, matchIndex - 30), matchIndex);
+          const afterMatch = content.slice(matchIndex + matchText.length, matchIndex + matchText.length + 30);
           
           // Check if it's part of a longer identifier (e.g., "unevaluated", "evaluate", "evaluation")
           // Also check for common false positives like "unevaluatedProperties", "evaluateExpression", etc.
@@ -1620,6 +1795,17 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           
           if ((isPartOfIdentifier && !matchText.includes('(')) || isCommonFalsePositive) {
             continue; // Skip - it's part of a variable/function name, not eval() call
+          }
+          
+          // Check if it's a method definition (async eval, function eval, const eval =, etc.)
+          // or method call on object (this.redis.eval, client.eval, etc.)
+          // These are NOT JavaScript eval() calls
+          const isMethodDefinition = /\b(async|function|const|let|var|class|static|get|set)\s+eval\s*\(/i.test(beforeMatch.slice(-20) + matchText);
+          const isMethodCall = /\.eval\s*\(/.test(beforeMatch.slice(-10) + matchText);
+          const isPropertyAccess = /\.eval\s*[=:]/.test(beforeMatch.slice(-10) + matchText + afterMatch.slice(0, 5));
+          
+          if (isMethodDefinition || isMethodCall || isPropertyAccess) {
+            continue; // Skip - it's a method name (e.g., Redis eval, async eval method), not JavaScript eval()
           }
           
           // Skip if it's in a test directory or test file (tests often use eval for mocking)
