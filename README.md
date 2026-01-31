@@ -186,9 +186,9 @@ Found 3 potential issue(s):
 
 ── CRITICAL ──
   ● evil-package@1.0.0
-    reason: extraneous_package
-    detail: Package exists in node_modules but is missing from lockfile
-    fix: Run `npm ci` to reinstall from lockfile
+    reason: version_mismatch
+    detail: Installed version 1.0.0 does not match lockfile version 0.9.5
+    fix: Run `npm ci` to reinstall correct version
 
 ── HIGH ──
   ● suspic-lib@2.0.0
@@ -198,9 +198,9 @@ Found 3 potential issue(s):
 
 ── MEDIUM ──
   ● some-addon@1.2.3
-    reason: install_script
-    detail: Has postinstall script: node-gyp rebuild
-    fix: Review the script to ensure it performs only expected operations
+    reason: extraneous_package
+    detail: Package exists in node_modules but is missing from lockfile
+    fix: Run `npm ci` to reinstall from lockfile
 
 ────────────────────────────────────────────────────────────
 Summary:
@@ -488,8 +488,9 @@ chain-audit automatically detects and parses:
 ## Detection Rules
 
 ### Critical Severity
-- **extraneous_package** – Package in node_modules not in lockfile
-- **version_mismatch** – Installed version differs from lockfile
+- **version_mismatch** – Installed version differs from lockfile (requires `--check-lockfile`)
+
+### High Severity
 - **corrupted_package_json** – Package has malformed or unreadable package.json
 
 ### High Severity (with `--verify-integrity`)
@@ -509,6 +510,7 @@ chain-audit automatically detects and parses:
 - **shell_execution** – Script executes shell commands
 
 ### Medium Severity
+- **extraneous_package** – Package in node_modules not in lockfile (requires `--check-lockfile`)
 - **install_script** – Has preinstall/install/postinstall/prepare script
 - **code_execution** – Script runs code via node -e, python -c, etc.
 - **child_process_usage** – Code uses child_process module
