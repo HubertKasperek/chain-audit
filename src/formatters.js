@@ -301,7 +301,9 @@ function formatText(issues, summary, context) {
   lines.push(color('https://github.com/hukasx0/chain-audit', colors.dim));
   lines.push('');
   lines.push(color('Disclaimer: Licensed under MIT License, provided "AS IS" without warranty.', colors.dim));
-  lines.push(color('The author makes no guarantees. Review all findings manually.', colors.dim));
+  lines.push(color('The author makes no guarantees and takes no responsibility for false', colors.dim));
+  lines.push(color('positives, false negatives, missed attacks, or any damages resulting from use.', colors.dim));
+  lines.push(color('Review all findings manually. Use at your own risk.', colors.dim));
 
   return lines.join('\n');
 }
