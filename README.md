@@ -145,11 +145,11 @@ chain-audit --check-typosquatting
 
 | Level | Description | Example |
 |-------|-------------|---------|
-| `critical` | Highly likely malicious | Obfuscated code with network access, extraneous packages |
+| `critical` | Highly likely malicious | Obfuscated code with network access, version mismatch |
 | `high` | Strong attack indicators | Suspicious install scripts with network/exec, typosquatting |
 | `medium` | Warrants investigation | Install scripts, shell execution patterns |
 | `low` | Informational | Native binaries, minimal metadata |
-| `info` | Metadata only | Packages with install scripts that match trusted patterns (if configured) |
+| `info` | Metadata only | Packages with install scripts that are in trusted packages list (if configured) |
 
 ### Filtering by Severity
 
@@ -169,7 +169,7 @@ chain-audit --severity low,medium
 chain-audit --severity critical,high --fail-on high
 ```
 
-Issues will be displayed in the order they are found, grouped by the severity levels you specified.
+Issues will be displayed sorted by severity (highest first), then by package name, grouped by severity level. When using `--severity`, only the specified severity levels are shown.
 
 ## Example Output
 
@@ -223,10 +223,10 @@ When `--detailed` is enabled, each finding includes:
 - **Matched patterns** (regex) that triggered the detection
 - **Package metadata**: author, repository URL, license, homepage, full file path
 - **Trust assessment**: trust score (0-100) and trust level (low/medium/high)
-- **Evidence**: file paths, line numbers, column numbers, matched text
+- **Evidence**: file paths, line numbers, column numbers (in matches array), matched text
 - **False positive hints**: guidance on legitimate uses that might trigger the detection
-- **Verification steps**: actionable steps for manual investigation
-- **Risk assessment**: for critical findings, notes about known attack patterns (e.g., Shai-Hulud 2.0)
+- **Verification steps**: actionable steps for manual investigation (available for some findings like typosquatting)
+- **Risk assessment**: for high/critical findings, notes about known attack patterns (e.g., Shai-Hulud 2.0)
 
 ### Trust Score Calculation
 
@@ -234,17 +234,17 @@ The trust score (0-100) is calculated based on multiple factors:
 
 | Factor | Points | Description |
 |--------|--------|-------------|
-| **Trusted scope** | +40 | Package is from a scope listed in `trustedPackages` config (if configured) |
-| **Known legitimate** | +50 | Package is in the `trustedPackages` config list (if configured) |
+| **Trusted scope** | +40 | Package is from a scope in the internal trusted scopes list (currently empty by default) |
+| **Known legitimate** | +50 | Package is in the internal known legitimate packages list (currently empty by default) |
 | **Has repository** | +20 | Package has a repository URL in package.json |
 | **Has homepage** | +10 | Package has a homepage URL |
 | **Has author** | +10 | Package has author information |
 | **Has license** | +10 | Package has a license field |
 
-**Note:** By default, no packages are whitelisted. All packages are checked with equal severity. You can configure `trustedPackages` in `.chainauditrc.json` if you need to reduce false positives for specific packages.
+**Note:** Trust score is calculated independently from the `trustedPackages` config option. The `trustedPackages` config option affects severity levels for install scripts, but does not influence the trust score calculation. By default, no packages are whitelisted in the trust score calculation. All packages are checked with equal severity.
 
 **Trust Levels:**
-- **High (70-100)**: Package is likely legitimate (e.g., configured as trusted with repository)
+- **High (70-100)**: Package is likely legitimate (e.g., has repository, homepage, author, and license)
 - **Medium (40-69)**: Package has some trust indicators but needs verification
 - **Low (0-39)**: Package lacks trust indicators, warrants closer investigation
 
@@ -306,10 +306,12 @@ Alternatively, you can manually create a config file in your project root. Suppo
   ],
   "trustedPatterns": {
     "node-gyp rebuild": true,
-    "prebuild-install": true
+    "prebuild-install": true,
+    "node-pre-gyp": true
   },
   "scanCode": false,
   "checkTyposquatting": false,
+  "checkLockfile": false,
   "failOn": "high",
   "severity": ["critical", "high"],
   "format": "text",
@@ -331,6 +333,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `trustedPatterns` | `object` | `{node-gyp rebuild: true, ...}` | Install script patterns considered safe |
 | `scanCode` | `boolean` | `false` | Enable deep code scanning by default |
 | `checkTyposquatting` | `boolean` | `false` | Enable typosquatting detection (disabled by default to reduce false positives) |
+| `checkLockfile` | `boolean` | `false` | Enable lockfile integrity checks (disabled by default due to possible false positives) |
 | `failOn` | `string` | `null` | Default fail threshold (`info\|low\|medium\|high\|critical`) |
 | `severity` | `string[]` | `null` | Show only specified severity levels (e.g., `["critical", "high"]`) |
 | `format` | `string` | `"text"` | Output format: `text`, `json`, or `sarif` |
@@ -479,16 +482,19 @@ chain-audit automatically detects and parses:
 
 | Lockfile | Package Manager |
 |----------|-----------------|
-| `package-lock.json` | npm v2/v3 |
-| `npm-shrinkwrap.json` | npm |
+| `package-lock.json` | npm v2/v3 (v1 supported as fallback) |
+| `npm-shrinkwrap.json` | npm (v1/v2/v3) |
 | `yarn.lock` | Yarn Classic & Berry |
 | `pnpm-lock.yaml` | pnpm |
-| `bun.lock` | Bun |
+| `bun.lock` | Bun (text format) |
+| `bun.lockb` | Bun (binary format, not supported - use `bun install --save-text-lockfile` to generate text format) |
 
 ## Detection Rules
 
 ### Critical Severity
 - **version_mismatch** – Installed version differs from lockfile (requires `--check-lockfile`)
+- **pipe_to_shell** – Script pipes content to shell (`| bash`)
+- **potential_env_exfiltration** – Env access + network in install script
 
 ### High Severity
 - **corrupted_package_json** – Package has malformed or unreadable package.json
@@ -496,29 +502,31 @@ chain-audit automatically detects and parses:
 ### High Severity (with `--verify-integrity`)
 - **package_name_mismatch** – Package name in package.json doesn't match expected from path
 - **suspicious_resolved_url** – Package resolved from local file or suspicious URL
-- **pipe_to_shell** – Script pipes content to shell (`| bash`)
-- **potential_env_exfiltration** – Env access + network in install script
-- **env_with_network** – Code accesses env vars and has network/exec capabilities
-- **obfuscated_code** – Base64/hex encoded strings, char code arrays
 
 ### High Severity
-- **network_access_script** – Install script with curl/wget/fetch patterns
+- **network_access_script** – Install script with curl/wget/fetch patterns (high for install scripts, low for trusted install scripts, medium/low for others)
 - **potential_typosquat** – Package name similar to popular package (requires `--check-typosquatting`)
-- **suspicious_name_pattern** – Package name uses character substitution (l33t speak) (requires `--check-typosquatting`)
-- **eval_usage** – Code uses eval() or new Function()
-- **sensitive_path_access** – Code accesses ~/.ssh, ~/.aws, etc.
-- **shell_execution** – Script executes shell commands
+- **suspicious_name_pattern** – Package name uses character substitution (l33t speak) or prefix patterns (requires `--check-typosquatting`) (high for character substitution, medium for prefix patterns)
+- **eval_usage** – Code uses eval() or new Function() (requires `--scan-code`)
+- **sensitive_path_access** – Code accesses ~/.ssh, ~/.aws, etc. (requires `--scan-code`)
+- **shell_execution** – Script executes shell commands (high for install scripts, medium/low for others)
+
+### Critical Severity (with `--scan-code`)
+- **obfuscated_code** – Base64/hex encoded strings, char code arrays
+
+### High Severity (with `--scan-code`)
+- **env_with_network** – Code accesses env vars and has network/exec capabilities (critical severity, or medium for install scripts)
 
 ### Medium Severity
 - **extraneous_package** – Package in node_modules not in lockfile (requires `--check-lockfile`)
-- **install_script** – Has preinstall/install/postinstall/prepare script
-- **code_execution** – Script runs code via node -e, python -c, etc.
+- **install_script** – Has preinstall/install/postinstall script (medium, or info/low for trusted packages/patterns)
+- **code_execution** – Script runs code via node -e, python -c, etc. (high for install scripts, medium/low for others)
 - **child_process_usage** – Code uses child_process module
 - **node_network_access** – Code uses Node.js network APIs (fetch, https, axios)
 - **git_operation_install** – Install script performs git operations
 
 ### Low/Info Severity
-- **native_binary** – Contains .node, .so, .dll, .dylib files
+- **native_binary** – Contains .node, .so, .dll, .dylib, .exe files
 - **no_repository** – No repository URL in package.json
 - **minimal_metadata** – Very short/missing description
 
@@ -527,11 +535,13 @@ chain-audit automatically detects and parses:
 ```javascript
 const { run } = require('chain-audit');
 
-const result = await run(['node', 'script.js', '--json', '--fail-on', 'high']);
+const result = run(['node', 'script.js', '--json', '--fail-on', 'high']);
 
 console.log(result.exitCode);  // 0 or 1
-console.log(result.issues);    // Array of issues found
-console.log(result.summary);   // { counts: {...}, maxSeverity: 'high' }
+console.log(result.issues);    // Array of all issues found (not filtered by --severity)
+console.log(result.summary);   // { counts: {...}, maxSeverity: 'high' } (calculated from filtered issues if --severity is used)
+
+// Note: run() also outputs to console.log() by default. Use --json format to get structured output.
 ```
 
 ## Best Practices

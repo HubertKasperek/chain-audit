@@ -441,7 +441,7 @@ function generateSarifRules() {
       id: 'install_script',
       name: 'InstallScript',
       shortDescription: { text: 'Has install lifecycle script' },
-      fullDescription: { text: 'Package has preinstall, install, postinstall, or prepare script' },
+      fullDescription: { text: 'Package has preinstall, install, or postinstall script' },
       defaultConfiguration: { level: 'warning' },
     },
     {
