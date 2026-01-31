@@ -226,7 +226,7 @@ When `--detailed` is enabled, each finding includes:
 - **Evidence**: file paths, line numbers, column numbers (in matches array), matched text
 - **False positive hints**: guidance on legitimate uses that might trigger the detection
 - **Verification steps**: actionable steps for manual investigation (available for some findings like typosquatting)
-- **Risk assessment**: for high/critical findings, notes about known attack patterns (e.g., Shai-Hulud 2.0)
+- **Risk assessment**: for high/critical findings, notes about known attack patterns
 
 ### Trust Score Calculation
 
@@ -451,7 +451,7 @@ The reusable workflow automatically uses `--ignore-scripts` for safe installatio
 
 ### CI/CD Security Best Practices
 
-Supply chain attacks like [Shai-Hulud 2.0](https://www.wiz.io/blog/shai-hulud-2-0-aftermath-ongoing-supply-chain-attack) exploited misconfigured GitHub Actions. **Protect your CI/CD:**
+Supply chain attacks have exploited misconfigured GitHub Actions. **Protect your CI/CD:**
 
 ```yaml
 # DANGEROUS - Don't use pull_request_target with checkout

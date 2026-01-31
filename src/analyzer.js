@@ -91,7 +91,7 @@ const CHILD_PROCESS_PATTERNS = [
 
 /**
  * Node.js network/HTTP patterns (for code scanning)
- * These are used for data exfiltration in attacks like Shai-Hulud 2.0
+ * These are used for data exfiltration in supply chain attacks
  */
 const NODE_NETWORK_PATTERNS = [
   /\bfetch\s*\(/,
@@ -941,7 +941,7 @@ function analyzeScriptContent(script, scriptName, isInstall, isTrusted, issues, 
             'Legitimate uses: sending analytics with env-based config',
             'Check if sensitive env vars (API keys, tokens) could be accessed',
           ],
-          riskAssessment: 'CRITICAL - Matches Shai-Hulud 2.0 attack pattern',
+          riskAssessment: 'CRITICAL - Matches known credential exfiltration attack patterns',
         };
       }
       
@@ -1961,7 +1961,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         }
       }
 
-      // Check for Node.js network patterns (like Shai-Hulud 2.0 attack)
+      // Check for Node.js network patterns (common in supply chain attacks)
       // Skip if package is clearly an HTTP client library or network-related utility
       const isHttpClient = pkg && /^(axios|got|node-fetch|undici|ky|superagent|request|needle|phin|bent|httpie|type-check|xmlhttprequest)/i.test(pkg.name);
       
@@ -2229,7 +2229,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           
           // Determine severity based on context - no package is trusted by default
           // CRITICAL: If there's network access, always critical (most dangerous pattern)
-          // This is the Shai-Hulud 2.0 attack pattern: env + network + exec
+          // This is a known supply chain attack pattern: env + network + exec
           let severity = 'critical';
           
           // Only lower severity if there's NO network access (only child_process)
@@ -2254,13 +2254,13 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           // Determine recommendation based on severity
           let recommendation;
           if (hasNetwork) {
-            recommendation = 'DANGER: This pattern (env + network + exec) matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.';
+            recommendation = 'DANGER: This pattern (env + network + exec) matches known credential exfiltration attack patterns. Investigate immediately.';
           } else if (isInstallScriptFile) {
             recommendation = 'Install scripts often use env vars + child_process. Review to ensure it\'s legitimate and not exfiltrating data.';
           } else if (severity === 'medium') {
             recommendation = 'This pattern (env + child_process, no network) can be legitimate. Review to ensure env vars are not being exfiltrated through child processes.';
           } else {
-            recommendation = 'DANGER: This pattern matches credential exfiltration attacks like Shai-Hulud 2.0. Investigate immediately.';
+            recommendation = 'DANGER: This pattern matches known credential exfiltration attack patterns. Investigate immediately.';
           }
           
           const issue = {
@@ -2297,7 +2297,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               networkLineNumber: execSnippet?.lineNumber || null,
               networkIsMinified: execSnippet?.isMinified || false,
               falsePositiveHints: [
-                hasNetwork ? '⚠ CRITICAL: matches Shai-Hulud 2.0 attack pattern' : null,
+                hasNetwork ? '⚠ CRITICAL: matches known credential exfiltration attack patterns' : null,
                 isInstallScriptFile ? '⚠ This appears to be an install script - may legitimately use child_process' : null,
                 !hasNetwork && envUsedLocally && !envPassedToExec ? '✓ Environment variables appear to be used only for local configuration (no network detected)' : null,
                 !hasNetwork && passesFullEnv ? '✓ Passing full process.env to child_process is a common pattern (but still review - no network detected)' : null,
@@ -2307,7 +2307,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 hasNetwork ? '⚠ Network access combined with env + exec = potential credential exfiltration' : null,
               ].filter(Boolean),
               riskAssessment: hasNetwork || severity === 'critical'
-                ? 'CRITICAL - matches Shai-Hulud 2.0 and similar attack patterns'
+                ? 'CRITICAL - matches known credential exfiltration attack patterns'
                 : isInstallScriptFile 
                 ? 'MEDIUM - Install scripts often use env + child_process legitimately, but should be reviewed'
                 : 'MEDIUM - Pattern can be legitimate (no network detected), review to ensure no credential exfiltration',
