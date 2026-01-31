@@ -18,9 +18,12 @@
 |---------|-------------|-----------|
 | Detects known CVEs | ❌ | ✅ |
 | Detects malicious install scripts | ✅ | ❌ |
-| Detects typosquatting | ✅ | ❌ |
-| Detects extraneous packages | ✅ | ❌ |
-| Detects obfuscated code | ✅ | ❌ |
+| Detects network access in scripts | ✅ | ❌ |
+| Detects env exfiltration attempts | ✅ | ❌ |
+| Detects executable files | ✅ | ❌ |
+| Detects native binaries | ✅ | ❌ |
+| Detects corrupted package.json | ✅ | ❌ |
+| Detects metadata anomalies | ✅ | ❌ |
 | Zero dependencies | ✅ | N/A |
 | Works offline | ✅ | ❌ |
 | SARIF output (GitHub integration) [experimental] | ✅ | ❌ |

@@ -42,7 +42,7 @@ function detectDefaultLockfile(cwd) {
 
 function summarize(issues) {
   const counts = { info: 0, low: 0, medium: 0, high: 0, critical: 0 };
-  let maxSeverity = 'info';
+  let maxSeverity = null;
   const severityOrder = ['info', 'low', 'medium', 'high', 'critical'];
 
   const rankSeverity = (level) => {
@@ -54,7 +54,7 @@ function summarize(issues) {
     if (counts[issue.severity] !== undefined) {
       counts[issue.severity] += 1;
     }
-    if (rankSeverity(issue.severity) > rankSeverity(maxSeverity)) {
+    if (maxSeverity === null || rankSeverity(issue.severity) > rankSeverity(maxSeverity)) {
       maxSeverity = issue.severity;
     }
   }
@@ -185,9 +185,9 @@ function run(argv = process.argv) {
 
   // Determine exit code
   const severityOrder = ['info', 'low', 'medium', 'high', 'critical'];
-  const rankSeverity = (level) => severityOrder.indexOf(level);
+  const rankSeverity = (level) => level === null ? -1 : severityOrder.indexOf(level);
 
-  if (config.failOn && rankSeverity(summary.maxSeverity) >= rankSeverity(config.failOn)) {
+  if (config.failOn && summary.maxSeverity !== null && rankSeverity(summary.maxSeverity) >= rankSeverity(config.failOn)) {
     return { exitCode: 1, issues, summary };
   }
 
