@@ -8,7 +8,7 @@
 #   scan:
 #     uses: hukasx0/chain-audit/.github/workflows/scan.yml@main
 #     with:
-#       fail-on: critical
+#       fail-on: high
 
 name: Supply Chain Scan
 
@@ -23,7 +23,7 @@ on:
       fail-on:
         description: 'Fail on severity level (info|low|medium|high|critical)'
         required: false
-        default: 'critical'
+        default: 'high'
         type: string
       scan-code:
         description: 'Enable deep code scanning (slower)'

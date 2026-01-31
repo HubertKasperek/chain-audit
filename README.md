@@ -440,7 +440,7 @@ jobs:
 
 **Available inputs:**
 - `node-modules-path` (default: `./node_modules`) – Path to node_modules directory
-- `fail-on` (default: `critical`) – Severity threshold to fail on (info|low|medium|high|critical)
+- `fail-on` (default: `high`) – Severity threshold to fail on (info|low|medium|high|critical)
 - `scan-code` (default: `false`) – Enable deep code scanning (slower)
 - `upload-sarif` (default: `true`) – Upload SARIF to GitHub Code Scanning [experimental]
 
