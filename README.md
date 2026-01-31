@@ -181,6 +181,7 @@ Issues will be displayed sorted by severity (highest first), then by package nam
 
 ```
 chain-audit v0.6.3
+Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules
 ────────────────────────────────────────────────────────────
 
 node_modules: /path/to/project/node_modules
