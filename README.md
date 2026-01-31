@@ -508,12 +508,6 @@ chain-audit automatically detects and parses:
 
 ### High Severity
 - **corrupted_package_json** – Package has malformed or unreadable package.json
-
-### High Severity (with `--verify-integrity`)
-- **package_name_mismatch** – Package name in package.json doesn't match expected from path
-- **suspicious_resolved_url** – Package resolved from local file or suspicious URL
-
-### High Severity
 - **network_access_script** – Install script with curl/wget/fetch patterns (high for install scripts, low for trusted install scripts, medium/low for others)
 - **potential_typosquat** – Package name similar to popular package (requires `--check-typosquatting`)
 - **suspicious_name_pattern** – Package name uses character substitution (l33t speak) or prefix patterns (requires `--check-typosquatting`) (high for character substitution, medium for prefix patterns)
@@ -521,11 +515,13 @@ chain-audit automatically detects and parses:
 - **sensitive_path_access** – Code accesses ~/.ssh, ~/.aws, etc. (requires `--scan-code`)
 - **shell_execution** – Script executes shell commands (high for install scripts, medium/low for others)
 
+### High Severity (with `--verify-integrity`)
+- **package_name_mismatch** – Package name in package.json doesn't match expected from path
+- **suspicious_resolved_url** – Package resolved from local file or suspicious URL
+
 ### Critical Severity (with `--scan-code`)
 - **obfuscated_code** – Base64/hex encoded strings, char code arrays
-
-### High Severity (with `--scan-code`)
-- **env_with_network** – Code accesses env vars and has network/exec capabilities (critical severity, or medium for install scripts)
+- **env_with_network** – Code accesses env vars and has network/exec capabilities (critical when network access is present, medium for install scripts without network)
 
 ### Medium Severity
 - **extraneous_package** – Package in node_modules not in lockfile (requires `--check-lockfile`)
@@ -534,7 +530,7 @@ chain-audit automatically detects and parses:
 - **child_process_usage** – Code uses child_process module
 - **node_network_access** – Code uses Node.js network APIs (fetch, https, axios)
 - **git_operation_install** – Install script performs git operations
-- **executable_files** – Contains executable files (shell scripts, etc.) - high if outside bin/, medium if in bin/
+- **executable_files** – Contains executable files (shell scripts, etc.) - high if outside bin/, low if in bin/
 
 ### Low/Info Severity
 - **native_binary** – Contains native module binaries (.node, .so, .dylib files)
