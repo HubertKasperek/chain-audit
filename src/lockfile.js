@@ -594,7 +594,8 @@ function computePackageIntegrity(pkgDir, algorithm = 'sha512') {
     const hash = crypto.createHash(algorithm);
     hash.update(content);
     return hash.digest('base64');
-  } catch {
+  } catch (err) {
+    console.warn(`Warning: Cannot compute package integrity for ${pkgDir}: ${err.message}`);
     return null;
   }
 }
@@ -657,7 +658,8 @@ function computeFileIntegrity(filePath, algorithm = 'sha512') {
     const hash = crypto.createHash(algorithm);
     hash.update(content);
     return `${algorithm}-${hash.digest('base64')}`;
-  } catch {
+  } catch (err) {
+    console.warn(`Warning: Cannot compute file integrity for ${filePath}: ${err.message}`);
     return null;
   }
 }

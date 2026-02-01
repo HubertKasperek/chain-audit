@@ -1010,7 +1010,8 @@ function findNativeArtifacts(pkgDir, maxDepth = 3) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot read directory ${dir} while searching for native artifacts: ${err.message}`);
       continue;
     }
 
@@ -1062,10 +1063,10 @@ function checkExecutableFiles(pkg, issues, verbose = false, config = {}) {
     const issue = {
       severity: severity,
       reason: 'executable_files',
-      detail: `Contains executable files (shell scripts, etc.): ${listed}${found.length > 5 ? `, +${found.length - 5} more` : ''}`,
+      detail: `Contains executable files (shell scripts, binaries, etc.): ${listed}${found.length > 5 ? `, +${found.length - 5} more` : ''}`,
       recommendation: suspiciousFiles.length > 0
         ? 'Executable files outside bin/ directory are suspicious and may indicate a supply chain attack. Review immediately.'
-        : 'Shell scripts in bin/ directory are less suspicious but should be reviewed for malicious content.',
+        : 'Shell scripts and binaries in bin/ directory are less suspicious but should be reviewed for malicious content.',
     };
     
     if (verbose) {
@@ -1112,6 +1113,7 @@ function checkExecutableFiles(pkg, issues, verbose = false, config = {}) {
  */
 function findExecutableFiles(pkgDir, maxDepth = 5) {
   const found = [];
+  const binaryFiles = []; // Track binary files that couldn't be read
   const stack = [{ dir: pkgDir, depth: 0 }];
   
   // Executable file extensions - only real executables, not .js (those are scanned by code scanner)
@@ -1135,7 +1137,8 @@ function findExecutableFiles(pkgDir, maxDepth = 5) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot read directory ${dir} while searching for executable files: ${err.message}`);
       continue;
     }
 
@@ -1186,18 +1189,22 @@ function findExecutableFiles(pkgDir, maxDepth = 5) {
                   found.push(fullPath);
                 }
               } catch {
-                // If we can't read content, skip (might be binary)
-                continue;
+                // If we can't read content, it's likely a binary file
+                // Track it as a binary executable (no extension but executable)
+                binaryFiles.push(fullPath);
               }
             }
-          } catch {
-            // Skip files we can't check
+          } catch (err) {
+            console.warn(`Warning: Cannot check file ${fullPath} for executable permissions: ${err.message}`);
             continue;
           }
         }
       }
     }
   }
+
+  // Add binary files to found list (they are executables too)
+  found.push(...binaryFiles);
 
   return found;
 }
@@ -2620,8 +2627,8 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         }
       }
 
-    } catch {
-      // Skip files that can't be read
+    } catch (err) {
+      console.warn(`Warning: Cannot read or analyze file ${filePath}: ${err.message}`);
       continue;
     }
   }
@@ -2661,7 +2668,8 @@ function findJsFiles(dir, maxDepth = 2) {
     let entries = [];
     try {
       entries = fs.readdirSync(currentDir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot read directory ${currentDir} while searching for JS files: ${err.message}`);
       continue;
     }
 
@@ -2761,21 +2769,33 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
     const match = lines[i].match(pattern);
     if (match) {
       const isMinified = isMinifiedLine(lines[i]);
+      const obfuscationType = getObfuscationType(pattern);
+      const isBase64 = obfuscationType === 'base64_encoding';
+      const isLongBase64 = isBase64 && match[0].length > 200;
       
-      if (isMinified) {
-        // For minified code, show a truncated snippet around the match
+      if (isMinified || isLongBase64) {
+        // For minified code or long base64, show a truncated snippet around the match
         const matchIndex = match.index;
         const matchLength = match[0].length;
         const line = lines[i];
+        
+        // For very long base64 matches, limit how much of the match we show
+        const maxMatchDisplay = isBase64 ? 200 : matchLength; // Show max 200 chars of base64 match
+        const displayMatchLength = Math.min(matchLength, maxMatchDisplay);
+        const matchIsTruncated = isBase64 && matchLength > maxMatchDisplay;
         
         // Extract context around the match (150 chars before, 150 after)
         const contextBefore = 150;
         const contextAfter = 150;
         const start = Math.max(0, matchIndex - contextBefore);
-        const end = Math.min(line.length, matchIndex + matchLength + contextAfter);
+        const end = Math.min(line.length, matchIndex + displayMatchLength + contextAfter);
         
         const beforeText = start > 0 ? '...' : '';
-        const afterText = end < line.length ? '...' : '';
+        let afterText = '';
+        if (matchIsTruncated || end < line.length) {
+          afterText = '...';
+        }
+        
         const snippetText = beforeText + line.slice(start, end) + afterText;
         
         // Calculate the position of the match marker in the snippet
@@ -2787,12 +2807,15 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
         const snippetLines = [];
         snippetLines.push(`${linePrefix}${snippetText}`);
         // Add marker pointing to the match (limit to reasonable length)
-        const markerChars = Math.min(matchLength, 15);
+        const markerChars = Math.min(displayMatchLength, 15);
         const markerLine = '        ' + ' '.repeat(markerPadding) + 
                           '^'.repeat(markerChars) + 
                           ` (column ${matchIndex + 1})`;
         snippetLines.push(markerLine);
-        snippetLines.push(`        [Minified code - showing context around match only]`);
+        const contextNote = isBase64 
+          ? '[Base64 encoded data - showing context around match only]'
+          : '[Minified code - showing context around match only]';
+        snippetLines.push(`        ${contextNote}`);
         
         return {
           lineNumber: i + 1,

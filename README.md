@@ -183,7 +183,7 @@ Issues will be displayed sorted by severity (highest first), then by package nam
 ## Example Output
 
 ```
-chain-audit v0.6.5
+chain-audit v0.6.6
 Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules
 ────────────────────────────────────────────────────────────
 
