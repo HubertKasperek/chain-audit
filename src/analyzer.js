@@ -2769,21 +2769,33 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
     const match = lines[i].match(pattern);
     if (match) {
       const isMinified = isMinifiedLine(lines[i]);
+      const obfuscationType = getObfuscationType(pattern);
+      const isBase64 = obfuscationType === 'base64_encoding';
+      const isLongBase64 = isBase64 && match[0].length > 200;
       
-      if (isMinified) {
-        // For minified code, show a truncated snippet around the match
+      if (isMinified || isLongBase64) {
+        // For minified code or long base64, show a truncated snippet around the match
         const matchIndex = match.index;
         const matchLength = match[0].length;
         const line = lines[i];
+        
+        // For very long base64 matches, limit how much of the match we show
+        const maxMatchDisplay = isBase64 ? 200 : matchLength; // Show max 200 chars of base64 match
+        const displayMatchLength = Math.min(matchLength, maxMatchDisplay);
+        const matchIsTruncated = isBase64 && matchLength > maxMatchDisplay;
         
         // Extract context around the match (150 chars before, 150 after)
         const contextBefore = 150;
         const contextAfter = 150;
         const start = Math.max(0, matchIndex - contextBefore);
-        const end = Math.min(line.length, matchIndex + matchLength + contextAfter);
+        const end = Math.min(line.length, matchIndex + displayMatchLength + contextAfter);
         
         const beforeText = start > 0 ? '...' : '';
-        const afterText = end < line.length ? '...' : '';
+        let afterText = '';
+        if (matchIsTruncated || end < line.length) {
+          afterText = '...';
+        }
+        
         const snippetText = beforeText + line.slice(start, end) + afterText;
         
         // Calculate the position of the match marker in the snippet
@@ -2795,12 +2807,15 @@ function extractCodeSnippet(content, pattern, contextLines = 3) {
         const snippetLines = [];
         snippetLines.push(`${linePrefix}${snippetText}`);
         // Add marker pointing to the match (limit to reasonable length)
-        const markerChars = Math.min(matchLength, 15);
+        const markerChars = Math.min(displayMatchLength, 15);
         const markerLine = '        ' + ' '.repeat(markerPadding) + 
                           '^'.repeat(markerChars) + 
                           ` (column ${matchIndex + 1})`;
         snippetLines.push(markerLine);
-        snippetLines.push(`        [Minified code - showing context around match only]`);
+        const contextNote = isBase64 
+          ? '[Base64 encoded data - showing context around match only]'
+          : '[Minified code - showing context around match only]';
+        snippetLines.push(`        ${contextNote}`);
         
         return {
           lineNumber: i + 1,
