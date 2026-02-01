@@ -92,7 +92,8 @@ function collectPackages(nodeModulesPath, maxDepth = 10) {
     let realDir;
     try {
       realDir = fs.realpathSync(dir);
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot resolve real path for ${dir}: ${err.message}`);
       continue;
     }
 
@@ -102,8 +103,9 @@ function collectPackages(nodeModulesPath, maxDepth = 10) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
       // Permission denied or other read error
+      console.warn(`Warning: Cannot read directory ${dir}: ${err.message}`);
       continue;
     }
 
@@ -137,7 +139,8 @@ function processScopedPackage(scopeDir, scopeRel, depth, stack, packages) {
   let scopeEntries = [];
   try {
     scopeEntries = fs.readdirSync(scopeDir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.warn(`Warning: Cannot read scoped package directory ${scopeDir}: ${err.message}`);
     return;
   }
 

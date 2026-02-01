@@ -1010,7 +1010,8 @@ function findNativeArtifacts(pkgDir, maxDepth = 3) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot read directory ${dir} while searching for native artifacts: ${err.message}`);
       continue;
     }
 
@@ -1062,10 +1063,10 @@ function checkExecutableFiles(pkg, issues, verbose = false, config = {}) {
     const issue = {
       severity: severity,
       reason: 'executable_files',
-      detail: `Contains executable files (shell scripts, etc.): ${listed}${found.length > 5 ? `, +${found.length - 5} more` : ''}`,
+      detail: `Contains executable files (shell scripts, binaries, etc.): ${listed}${found.length > 5 ? `, +${found.length - 5} more` : ''}`,
       recommendation: suspiciousFiles.length > 0
         ? 'Executable files outside bin/ directory are suspicious and may indicate a supply chain attack. Review immediately.'
-        : 'Shell scripts in bin/ directory are less suspicious but should be reviewed for malicious content.',
+        : 'Shell scripts and binaries in bin/ directory are less suspicious but should be reviewed for malicious content.',
     };
     
     if (verbose) {
@@ -1112,6 +1113,7 @@ function checkExecutableFiles(pkg, issues, verbose = false, config = {}) {
  */
 function findExecutableFiles(pkgDir, maxDepth = 5) {
   const found = [];
+  const binaryFiles = []; // Track binary files that couldn't be read
   const stack = [{ dir: pkgDir, depth: 0 }];
   
   // Executable file extensions - only real executables, not .js (those are scanned by code scanner)
@@ -1135,7 +1137,8 @@ function findExecutableFiles(pkgDir, maxDepth = 5) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot read directory ${dir} while searching for executable files: ${err.message}`);
       continue;
     }
 
@@ -1186,18 +1189,22 @@ function findExecutableFiles(pkgDir, maxDepth = 5) {
                   found.push(fullPath);
                 }
               } catch {
-                // If we can't read content, skip (might be binary)
-                continue;
+                // If we can't read content, it's likely a binary file
+                // Track it as a binary executable (no extension but executable)
+                binaryFiles.push(fullPath);
               }
             }
-          } catch {
-            // Skip files we can't check
+          } catch (err) {
+            console.warn(`Warning: Cannot check file ${fullPath} for executable permissions: ${err.message}`);
             continue;
           }
         }
       }
     }
   }
+
+  // Add binary files to found list (they are executables too)
+  found.push(...binaryFiles);
 
   return found;
 }
@@ -2620,8 +2627,8 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         }
       }
 
-    } catch {
-      // Skip files that can't be read
+    } catch (err) {
+      console.warn(`Warning: Cannot read or analyze file ${filePath}: ${err.message}`);
       continue;
     }
   }
@@ -2661,7 +2668,8 @@ function findJsFiles(dir, maxDepth = 2) {
     let entries = [];
     try {
       entries = fs.readdirSync(currentDir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      console.warn(`Warning: Cannot read directory ${currentDir} while searching for JS files: ${err.message}`);
       continue;
     }
 
