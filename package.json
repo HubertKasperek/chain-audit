@@ -1,7 +1,7 @@
 {
   "name": "chain-audit",
   "version": "0.6.5",
-  "description": "Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules. Scans for malicious install scripts, typosquatting, extraneous packages, lockfile integrity, obfuscated code, executable files, and suspicious code patterns.",
+  "description": "Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules. Detects malicious install scripts, network access, env exfiltration, lockfile integrity, obfuscated code, and suspicious patterns. Works fully offline.",
   "main": "src/index.js",
   "bin": {
     "chain-audit": "src/index.js"
