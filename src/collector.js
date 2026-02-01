@@ -102,7 +102,7 @@ function collectPackages(nodeModulesPath, maxDepth = 10) {
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch (err) {
+    } catch {
       // Permission denied or other read error
       continue;
     }
