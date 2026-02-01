@@ -84,7 +84,8 @@ function formatText(issues, summary, context) {
     for (const issue of sorted) {
       if (issue.severity !== currentSeverity) {
         currentSeverity = issue.severity;
-        lines.push(color(`── ${currentSeverity.toUpperCase()} ──`, getSeverityColor(issue.severity)));
+        const severityLabel = currentSeverity ? currentSeverity.toUpperCase() : 'UNKNOWN';
+        lines.push(color(`── ${severityLabel} ──`, getSeverityColor(issue.severity)));
       }
 
       const pkgInfo = `${issue.package}@${issue.version}`;
@@ -315,6 +316,9 @@ function formatText(issues, summary, context) {
  * Get ANSI color code for severity
  */
 function getSeverityColor(severity) {
+  if (severity === null || severity === undefined) {
+    return colors.dim;
+  }
   switch (severity) {
     case 'critical': return colors.magenta;
     case 'high': return colors.red;
