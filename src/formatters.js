@@ -302,7 +302,7 @@ function formatText(issues, summary, context) {
   lines.push('');
   lines.push(color('─'.repeat(60), colors.dim));
   lines.push(color('chain-audit by Hubert Kasperek • MIT License', colors.dim));
-  lines.push(color('https://github.com/hukasx0/chain-audit', colors.dim));
+  lines.push(color('https://github.com/HubertKasperek/chain-audit', colors.dim));
   lines.push('');
   lines.push(color('Disclaimer: Licensed under MIT License, provided "AS IS" without warranty.', colors.dim));
   lines.push(color('The author makes no guarantees and takes no responsibility for false', colors.dim));
@@ -418,7 +418,7 @@ function formatSarif(issues, summary, context) {
           driver: {
             name: 'chain-audit',
             version: context.version || '1.0.0',
-            informationUri: 'https://github.com/hukasx0/chain-audit',
+            informationUri: 'https://github.com/HubertKasperek/chain-audit',
             rules: generateSarifRules(),
           },
         },

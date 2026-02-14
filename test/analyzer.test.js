@@ -125,6 +125,72 @@ describe('analyzePackage', () => {
     assert.ok(!mismatchIssue, 'Should not detect version mismatch');
     assert.ok(!extraneousIssue, 'Should not detect extraneous package');
   });
+
+  it('should not flag package_name_mismatch for nested package paths', () => {
+    const pkg = {
+      name: 'bar',
+      version: '1.0.0',
+      scripts: {},
+      dir: '/fake/path',
+      relativePath: 'foo/node_modules/bar',
+    };
+
+    const lockIndex = {
+      indexByPath: new Map([['foo/node_modules/bar', { name: 'bar', version: '1.0.0' }]]),
+      indexByName: new Map([['bar', { version: '1.0.0' }]]),
+      lockPresent: true,
+      lockType: 'npm-v2',
+    };
+
+    const issues = analyzePackage(pkg, lockIndex, { verifyIntegrity: true });
+    const mismatchIssue = issues.find(i => i.reason === 'package_name_mismatch');
+    assert.ok(!mismatchIssue, 'Nested package leaf name should be treated as expected package name');
+  });
+
+  it('should detect package_name_mismatch for scoped package mismatch', () => {
+    const pkg = {
+      name: '@evil/bar',
+      version: '1.0.0',
+      scripts: {},
+      dir: '/fake/path',
+      relativePath: '@scope/bar',
+    };
+
+    const lockIndex = {
+      indexByPath: new Map([['@scope/bar', { name: '@scope/bar', version: '1.0.0' }]]),
+      indexByName: new Map([['@evil/bar', { version: '1.0.0' }]]),
+      lockPresent: true,
+      lockType: 'npm-v2',
+    };
+
+    const issues = analyzePackage(pkg, lockIndex, { verifyIntegrity: true });
+    const mismatchIssue = issues.find(i => i.reason === 'package_name_mismatch');
+    assert.ok(mismatchIssue, 'Scoped package mismatch should be detected');
+    assert.strictEqual(mismatchIssue.severity, 'high');
+  });
+
+  it('should match lockfile by path for Windows-style relative paths', () => {
+    const pkg = {
+      name: 'bar',
+      version: '1.0.0',
+      scripts: {},
+      dir: '/fake/path',
+      relativePath: 'foo\\node_modules\\bar',
+    };
+
+    const lockIndex = {
+      indexByPath: new Map([['foo/node_modules/bar', { name: 'bar', version: '1.0.0' }]]),
+      indexByName: new Map(),
+      lockPresent: true,
+      lockType: 'npm-v2',
+    };
+
+    const issues = analyzePackage(pkg, lockIndex, { checkLockfile: true });
+    const extraneousIssue = issues.find(i => i.reason === 'extraneous_package');
+    const versionMismatchIssue = issues.find(i => i.reason === 'version_mismatch');
+    assert.ok(!extraneousIssue, 'Package should not be treated as extraneous');
+    assert.ok(!versionMismatchIssue, 'Package version should match lockfile entry');
+  });
 });
 
 describe('typosquatting detection', () => {
@@ -356,6 +422,59 @@ describe('code analysis', () => {
       const evalIssue = issues.find(i => i.reason === 'eval_usage');
       
       assert.ok(evalIssue, 'Should detect eval usage');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should ignore eval-like pattern in string when apostrophe appears in comment', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(
+      jsFile,
+      "// it's metadata text\nconst x = 'Code uses eval(), new Function(), or similar dynamic code execution';"
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const evalIssue = issues.find(i => i.reason === 'eval_usage');
+      assert.ok(!evalIssue, 'Pattern inside a plain string should not be flagged as eval usage');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should still detect real new Function call even with apostrophe in comment', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(jsFile, "// it's dangerous\nnew Function('return 1')();");
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const evalIssue = issues.find(i => i.reason === 'eval_usage');
+      assert.ok(evalIssue, 'Real new Function call should still be detected');
     } finally {
       fs.rmSync(tempDir, { recursive: true });
     }

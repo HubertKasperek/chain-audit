@@ -286,7 +286,8 @@ function checkLockfileIntegrity(pkg, lockIndex, issues, verbose = false, config 
   if (!config.checkLockfile) return;
   if (!lockIndex.lockPresent) return;
 
-  const lockByPath = lockIndex.indexByPath.get(pkg.relativePath);
+  const normalizedRelativePath = normalizePackageRelativePath(pkg.relativePath);
+  const lockByPath = lockIndex.indexByPath.get(normalizedRelativePath);
   const lockByName = lockIndex.indexByName.get(pkg.name);
 
   if (!lockByPath && !lockByName) {
@@ -358,15 +359,16 @@ function checkLockfileIntegrity(pkg, lockIndex, issues, verbose = false, config 
 function checkPackageStructureIntegrity(pkg, lockIndex, issues, verbose = false) {
   if (!lockIndex.lockPresent) return;
 
-  const lockByPath = lockIndex.indexByPath.get(pkg.relativePath);
+  const normalizedRelativePath = normalizePackageRelativePath(pkg.relativePath);
+  const lockByPath = lockIndex.indexByPath.get(normalizedRelativePath);
   const lockByName = lockIndex.indexByName.get(pkg.name);
   const lockEntry = lockByPath || lockByName;
 
   if (!lockEntry) return; // Already flagged as extraneous in checkLockfileIntegrity
 
   // Check 1: Package should have a name matching the expected name
-  const expectedName = lockByPath ? extractPackageNameFromPath(pkg.relativePath) : pkg.name;
-  if (pkg.name && pkg.name !== expectedName && !pkg.name.startsWith('@')) {
+  const expectedName = lockByPath ? extractPackageNameFromPath(normalizedRelativePath) : pkg.name;
+  if (pkg.name && pkg.name !== expectedName) {
     const issue = {
       severity: 'high',
       reason: 'package_name_mismatch',
@@ -437,12 +439,28 @@ function checkPackageStructureIntegrity(pkg, lockIndex, issues, verbose = false)
  * Extract expected package name from relative path
  */
 function extractPackageNameFromPath(relativePath) {
-  const parts = relativePath.split('/');
+  const normalized = normalizePackageRelativePath(relativePath);
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length === 0) return '';
+
+  // Use the last package segment after the last "node_modules/".
+  // Example: "foo/node_modules/bar" -> "bar".
+  const nodeModulesIndex = parts.lastIndexOf('node_modules');
+  const start = nodeModulesIndex >= 0 ? nodeModulesIndex + 1 : 0;
+  const first = parts[start];
+  const second = parts[start + 1];
+
   // Handle scoped packages (@scope/name)
-  if (parts[0] && parts[0].startsWith('@') && parts.length >= 2) {
-    return `${parts[0]}/${parts[1]}`;
+  if (first && first.startsWith('@') && second) {
+    return `${first}/${second}`;
   }
-  return parts[0];
+
+  return first || '';
+}
+
+function normalizePackageRelativePath(relativePath) {
+  if (!relativePath) return '';
+  return String(relativePath).replace(/\\/g, '/');
 }
 
 /**
@@ -1501,137 +1519,106 @@ function checkMetadataAnomalies(pkg, issues, verbose = false) {
 }
 
 /**
+ * Get lexical context right before a character index.
+ * Tracks whether parser is currently in comment or string.
+ */
+function getLexicalContextBeforeIndex(content, targetIndex) {
+  let inLineComment = false;
+  let inBlockComment = false;
+  let inString = false;
+  let stringChar = null;
+  let stringStart = -1;
+  let escaped = false;
+
+  for (let i = 0; i < targetIndex; i++) {
+    const char = content[i];
+    const nextChar = content[i + 1];
+
+    if (inLineComment) {
+      if (char === '\n') {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (char === '*' && nextChar === '/') {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === stringChar) {
+        inString = false;
+        stringChar = null;
+        stringStart = -1;
+      }
+      continue;
+    }
+
+    if (char === '/' && nextChar === '/') {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+
+    if (char === '/' && nextChar === '*') {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+
+    if (char === '"' || char === '\'' || char === '`') {
+      inString = true;
+      stringChar = char;
+      stringStart = i;
+    }
+  }
+
+  return {
+    inLineComment,
+    inBlockComment,
+    inString,
+    stringChar,
+    stringStart,
+  };
+}
+
+/**
  * Check if a match is in a comment, string literal, or regex pattern definition
  * This helps reduce false positives when scanning code that defines detection patterns
  */
 function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
-  // Get the line containing the match
-  const lines = content.split('\n');
-  let charCount = 0;
-  let lineIndex = 0;
-  let lineStart = 0;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const lineEnd = charCount + lines[i].length;
-    if (matchIndex >= charCount && matchIndex < lineEnd) {
-      lineIndex = i;
-      lineStart = charCount;
-      break;
-    }
-    charCount = lineEnd + 1; // +1 for newline
-  }
-  
-  const line = lines[lineIndex];
-  const matchInLine = matchIndex - lineStart;
-  const lineBeforeMatch = line.slice(0, matchInLine);
-  
-  // Check if it's in a multi-line comment (need to check entire content, not just line)
   const contentBeforeMatch = content.slice(0, matchIndex);
-  const lastCommentStart = contentBeforeMatch.lastIndexOf('/*');
-  if (lastCommentStart !== -1) {
-    const lastCommentEnd = contentBeforeMatch.lastIndexOf('*/');
-    if (lastCommentEnd < lastCommentStart) {
-      // Comment started but not closed - match is after comment start
-      return true; // In multi-line comment
-    }
-  }
-  
-  // Check if it's in a single-line comment
-  const singleLineCommentIndex = lineBeforeMatch.lastIndexOf('//');
-  if (singleLineCommentIndex !== -1) {
-    // Check if there's no newline between comment and match (same line)
-    const afterComment = lineBeforeMatch.slice(singleLineCommentIndex + 2);
-    if (!afterComment.includes('\n')) {
-      // No newline means we're still on the same line as the comment
-      // Check if there's an unclosed string (which would mean we're not in comment)
-      // But simpler: if // is before match on same line and no newline, we're in comment
-      return true; // In comment
-    }
-  }
-  
-  // Check if it's in a string literal (single, double, or template string)
-  // Need to check entire content before match, not just the line (for multiline strings)
-  let inString = false;
-  let stringChar = null;
-  let escaped = false;
-  
-  // Check entire content before match for string context
-  for (let i = 0; i < contentBeforeMatch.length; i++) {
-    const char = contentBeforeMatch[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if ((char === '"' || char === "'" || char === '`') && !inString) {
-      inString = true;
-      stringChar = char;
-    } else if (char === stringChar && inString) {
-      inString = false;
-      stringChar = null;
-    }
+  const lexicalContext = getLexicalContextBeforeIndex(content, matchIndex);
+
+  if (lexicalContext.inBlockComment || lexicalContext.inLineComment) {
+    return true;
   }
   
   // If we're in a string, check if match is also in the string
-  if (inString) {
-    // CRITICAL: Don't ignore patterns in strings if they're passed to code execution functions
-    // Malware often uses: eval("process.env.SECRET"), new Function("return process.env.TOKEN")
-    // Check if the string is passed to eval, Function, require, setTimeout, etc.
-    const dangerousContexts = [
-      /\beval\s*\(/,
-      /\bnew\s+Function\s*\(/,
-      /\bFunction\s*\(/,
-      /\brequire\s*\(/,
-      /\bsetTimeout\s*\(/,
-      /\bsetInterval\s*\(/,
-      /\bvm\.runInContext\s*\(/,
-      /\bvm\.runInNewContext\s*\(/,
-      /\bvm\.runInThisContext\s*\(/,
-      /\bvm\.compileFunction\s*\(/,
-    ];
+  if (lexicalContext.inString) {
+    const stringChar = lexicalContext.stringChar;
+    // Don't ignore only when the string is an immediate argument to a dangerous call.
+    // This avoids false positives from descriptive text like "uses eval(), new Function()".
+    const immediateDangerousCall = /(?:\beval|\bFunction|\bnew\s+Function|\brequire|\bsetTimeout|\bsetInterval|\bvm\.(?:runInContext|runInNewContext|runInThisContext|compileFunction))\s*\(\s*$/;
     
-    // Find the start of the string by looking backwards from match
-    let stringStartIndex = -1;
-    let foundQuote = false;
-    for (let i = matchInLine - 1; i >= 0; i--) {
-      if (lineBeforeMatch[i] === stringChar && (i === 0 || lineBeforeMatch[i - 1] !== '\\')) {
-        stringStartIndex = lineStart + i + 1; // +1 to get position after quote
-        foundQuote = true;
-        break;
-      }
-    }
-    
-    if (foundQuote && stringStartIndex !== -1) {
+    const stringStartIndex = lexicalContext.stringStart >= 0 ? lexicalContext.stringStart + 1 : -1;
+    if (stringStartIndex !== -1) {
       // Look backwards from string start to find if it's passed to dangerous function
       const beforeString = content.slice(Math.max(0, stringStartIndex - 200), stringStartIndex);
-      
-      // Check if string is passed to dangerous function
-      for (const dangerousPattern of dangerousContexts) {
-        const dangerousMatch = beforeString.match(dangerousPattern);
-        if (dangerousMatch) {
-          // Check if the dangerous function call is before the string (within reasonable distance)
-          const dangerousIndex = stringStartIndex - beforeString.length + dangerousMatch.index;
-          const distance = stringStartIndex - dangerousIndex;
-          // If dangerous function is within 100 chars before string, don't ignore
-          if (distance < 100 && distance > 0) {
-            return false; // DON'T ignore - this is dangerous!
-          }
-        }
-      }
-      
-      // Also check for require("https://...") pattern specifically
-      if (stringChar === '"' || stringChar === "'") {
-        const requireMatch = beforeString.match(/\brequire\s*\(\s*$/);
-        if (requireMatch) {
-          // String is passed to require() - check if it's a URL
-          const afterMatch = content.slice(matchIndex + matchLength, matchIndex + matchLength + 20);
-          if (/https?:\/\//.test(afterMatch)) {
-            return false; // DON'T ignore - require("https://...") is suspicious!
-          }
-        }
+      if (immediateDangerousCall.test(beforeString)) {
+        return false; // DON'T ignore - string is directly executed
       }
     }
     

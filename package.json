@@ -1,6 +1,6 @@
 {
   "name": "chain-audit",
-  "version": "0.6.6",
+  "version": "0.6.8",
   "description": "Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules. Detects malicious install scripts, network access, env exfiltration, lockfile integrity, obfuscated code, and suspicious patterns. Works fully offline.",
   "main": "src/index.js",
   "bin": {
@@ -42,12 +42,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hukasx0/chain-audit.git"
+    "url": "git+https://github.com/HubertKasperek/chain-audit.git"
   },
   "bugs": {
-    "url": "https://github.com/hukasx0/chain-audit/issues"
+    "url": "https://github.com/HubertKasperek/chain-audit/issues"
   },
-  "homepage": "https://github.com/hukasx0/chain-audit#readme",
+  "homepage": "https://github.com/HubertKasperek/chain-audit#readme",
   "engines": {
     "node": ">=18.0.0"
   },

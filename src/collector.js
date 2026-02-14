@@ -14,6 +14,15 @@ const JSON_READ_ERROR = {
 };
 
 /**
+ * Normalize relative package paths for lockfile lookups across platforms.
+ * lockfile paths use "/" separators even on Windows.
+ */
+function normalizeRelativePath(relativePath) {
+  if (!relativePath) return '';
+  return String(relativePath).replace(/\\/g, '/');
+}
+
+/**
  * Safely read and parse a JSON file with detailed error information
  * @param {string} filePath - Path to JSON file
  * @param {Object} options - Options
@@ -115,7 +124,7 @@ function collectPackages(nodeModulesPath, maxDepth = 10) {
       if (entry.name === '.bin') continue;
 
       const entryPath = path.join(dir, entry.name);
-      const relPath = relative ? path.join(relative, entry.name) : entry.name;
+      const relPath = normalizeRelativePath(relative ? path.join(relative, entry.name) : entry.name);
 
       if (!entry.isDirectory()) continue;
 
@@ -149,7 +158,7 @@ function processScopedPackage(scopeDir, scopeRel, depth, stack, packages) {
     if (scoped.name.startsWith('.')) continue;
 
     const scopedDir = path.join(scopeDir, scoped.name);
-    const scopedRel = path.join(scopeRel, scoped.name);
+    const scopedRel = normalizeRelativePath(path.join(scopeRel, scoped.name));
     
     processPackage(scopedDir, scopedRel, depth, stack, packages);
   }
@@ -172,13 +181,13 @@ function processPackage(pkgDir, pkgRel, depth, stack, packages) {
     if (fs.existsSync(nestedNodeModules)) {
       stack.push({
         dir: nestedNodeModules,
-        relative: path.join(pkgRel, 'node_modules'),
+        relative: normalizeRelativePath(path.join(pkgRel, 'node_modules')),
         depth: depth + 1,
       });
     }
   } else {
     // Not a package, might be a directory containing packages
-    stack.push({ dir: pkgDir, relative: pkgRel, depth });
+    stack.push({ dir: pkgDir, relative: normalizeRelativePath(pkgRel), depth });
   }
 }
 
@@ -219,7 +228,7 @@ function readPackage(dir, relativePath) {
       license: null,
       publishConfig: null,
       dir,
-      relativePath,
+      relativePath: normalizeRelativePath(relativePath),
       // Error information for security analysis
       _parseError: true,
       _errorType: result.errorType,
@@ -250,7 +259,7 @@ function readPackage(dir, relativePath) {
     publishConfig: pkg.publishConfig || null,
     // Directory info
     dir,
-    relativePath,
+    relativePath: normalizeRelativePath(relativePath),
   };
 }
 
