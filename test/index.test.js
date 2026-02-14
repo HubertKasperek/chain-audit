@@ -82,6 +82,12 @@ describe('run', () => {
     }, /node_modules not found/);
   });
 
+  it('should throw error for non-existent explicit config path', () => {
+    assert.throws(() => {
+      run(['node', 'script', '--config', '/tmp/chain-audit-missing-config.json']);
+    }, /Config file or directory not found/);
+  });
+
   it('should scan packages and find issues', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
     const nodeModules = path.join(tempDir, 'node_modules');
@@ -265,6 +271,36 @@ describe('run', () => {
       process.chdir(originalCwd);
       fs.rmSync(scanProjectDir, { recursive: true });
       fs.rmSync(unrelatedCwd, { recursive: true });
+    }
+  });
+
+  it('should not crash on ignore-package glob with regex-special chars', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const nodeModules = path.join(tempDir, 'node_modules');
+    fs.mkdirSync(nodeModules, { recursive: true });
+
+    const pkgDir = path.join(nodeModules, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        version: '1.0.0',
+        scripts: { postinstall: 'echo hello' },
+      })
+    );
+
+    try {
+      const result = run([
+        'node',
+        'script',
+        '--node-modules', nodeModules,
+        '--ignore-packages', '*[',
+        '--json',
+      ]);
+      assert.strictEqual(result.exitCode, 0);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
     }
   });
 });

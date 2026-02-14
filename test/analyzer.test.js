@@ -109,6 +109,24 @@ describe('analyzePackage', () => {
     assert.strictEqual(installIssue.severity, 'info', 'Should be info for trusted package');
   });
 
+  it('should not crash on trusted package glob with regex-special chars', () => {
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: { postinstall: 'echo hello' },
+      dir: '/fake/path',
+      relativePath: 'test-pkg',
+    };
+
+    const config = {
+      trustedPackages: ['*['],
+    };
+
+    assert.doesNotThrow(() => {
+      analyzePackage(pkg, emptyLockIndex, config);
+    });
+  });
+
   it('should not flag matching versions', () => {
     const pkg = {
       name: 'test-pkg',
@@ -480,6 +498,31 @@ describe('code analysis', () => {
     }
   });
 
+  it('should ignore function declaration named Function', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(jsFile, 'function Function() { return 1; }\nFunction();');
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const evalIssue = issues.find(i => i.reason === 'eval_usage');
+      assert.ok(!evalIssue, 'Function declaration/call should not be treated as dynamic Function constructor');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
   it('should detect child_process usage when scanCode is enabled', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
     const pkgDir = path.join(tempDir, 'test-pkg');
@@ -501,6 +544,59 @@ describe('code analysis', () => {
       const childProcessIssue = issues.find(i => i.reason === 'child_process_usage');
       
       assert.ok(childProcessIssue, 'Should detect child_process usage');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should detect aliased child_process function usage', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(jsFile, 'const { exec: run } = require("child_process"); run("whoami");');
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const childProcessIssue = issues.find(i => i.reason === 'child_process_usage');
+      assert.ok(childProcessIssue, 'Aliased child_process calls should still be detected');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should ignore unrelated exec() usage when child_process is imported but not used', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(
+      jsFile,
+      'const cp = require("child_process"); const redis = { exec() { return true; } }; redis.exec("GET key");'
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const childProcessIssue = issues.find(i => i.reason === 'child_process_usage');
+      assert.ok(!childProcessIssue, 'Unrelated exec() calls should not trigger child_process usage');
     } finally {
       fs.rmSync(tempDir, { recursive: true });
     }
@@ -553,6 +649,148 @@ describe('code analysis', () => {
       const envNetworkIssue = issues.find(i => i.reason === 'env_with_network');
       
       assert.ok(envNetworkIssue, 'Should detect env access with network');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should detect env access with aliased child_process execution', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(
+      jsFile,
+      'const { exec: run } = require("child_process"); const token = process.env.NPM_TOKEN; run("echo " + token);'
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const envNetworkIssue = issues.find(i => i.reason === 'env_with_network');
+      assert.ok(envNetworkIssue, 'Should detect env access combined with child_process execution');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should ignore unrelated env and network usage when not connected', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    const filler = Array.from({ length: 90 }, (_, i) => `const noop${i} = ${i};`).join('\n');
+    fs.writeFileSync(
+      jsFile,
+      `const token = process.env.API_KEY;\n${filler}\nfetch("https://status.example.com/health");`
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const envNetworkIssue = issues.find(i => i.reason === 'env_with_network');
+      assert.ok(!envNetworkIssue, 'Unrelated env and network usage should not trigger env_with_network');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should not flag build env with child_process when no sensitive flow', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'build-from-source.js');
+    fs.writeFileSync(
+      jsFile,
+      'const { spawn } = require("child_process");\nif (process.env.npm_config_build_from_source === "true") { spawn("node", ["-v"]); }'
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const envIssue = issues.find(i => i.reason === 'env_with_network');
+      assert.ok(!envIssue, 'Benign build env + child_process should not trigger env_with_network');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should downgrade install script env/network with non-sensitive env vars', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'install.js');
+    fs.writeFileSync(
+      jsFile,
+      'const https = require("https"); const p = process.env.ESBUILD_BINARY_PATH; https.get("https://example.com/bin?path=" + p, () => {});'
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const envIssue = issues.find(i => i.reason === 'env_with_network');
+      assert.ok(envIssue, 'Install env+network should still be visible');
+      assert.notStrictEqual(envIssue.severity, 'critical', 'Non-sensitive install env+network should not be critical');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should ignore non-obfuscated String.fromCharCode with expressions', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'longbits.js');
+    fs.writeFileSync(
+      jsFile,
+      'function toBytes(lo, hi) { return String.fromCharCode(lo & 255, lo >>> 8 & 255, lo >>> 16 & 255, lo >>> 24 & 255, hi & 255, hi >>> 8 & 255, hi >>> 16 & 255, hi >>> 24 & 255); }'
+    );
+
+    const pkg = {
+      name: 'test-pkg',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'test-pkg',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const obfuscationIssue = issues.find(i => i.reason === 'obfuscated_code');
+      assert.ok(!obfuscationIssue, 'Computed byte conversion with fromCharCode should not be treated as obfuscation');
     } finally {
       fs.rmSync(tempDir, { recursive: true });
     }

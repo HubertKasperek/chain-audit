@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { matchesGlobPattern } = require('./utils');
 
 // ==================== Detection Patterns ====================
 
@@ -89,6 +90,23 @@ const CHILD_PROCESS_PATTERNS = [
   /\bfork\s*\(/,
 ];
 
+const CHILD_PROCESS_METHOD_NAMES = new Set([
+  'exec',
+  'execSync',
+  'execFile',
+  'execFileSync',
+  'spawn',
+  'spawnSync',
+  'fork',
+]);
+
+const NETWORK_METHOD_NAMES = new Set([
+  'request',
+  'get',
+  'resolve',
+  'lookup',
+]);
+
 /**
  * Node.js network/HTTP patterns (for code scanning)
  * These are used for data exfiltration in supply chain attacks
@@ -157,8 +175,8 @@ const OBFUSCATION_PATTERNS = [
   /\\x[0-9a-fA-F]{2}(\\x[0-9a-fA-F]{2}){10,}/,
   // Unicode escape sequences
   /\\u[0-9a-fA-F]{4}(\\u[0-9a-fA-F]{4}){10,}/,
-  // Array of char codes
-  /String\.fromCharCode\([^)]{50,}\)/,
+  // Large arrays of numeric char codes (common in obfuscators)
+  /String\.fromCharCode\(\s*(?:(?:0x[0-9a-fA-F]{2,}|[0-9]{2,3})\s*,\s*){8,}(?:0x[0-9a-fA-F]{2,}|[0-9]{2,3})\s*\)/,
   // Heavily chained array methods (obfuscators love these)
   /\]\s*\[\s*['"`]\w+['"`]\s*\]\s*\[\s*['"`]\w+['"`]\s*\]/,
 ];
@@ -472,11 +490,7 @@ function analyzeScripts(pkg, config, issues, verbose = false) {
 
   // Check if package is trusted (from config or known legitimate packages)
   const isTrustedFromConfig = trustedPackages.some(pattern => {
-    if (pattern.includes('*')) {
-      const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-      return regex.test(pkg.name);
-    }
-    return pattern === pkg.name;
+    return matchesGlobPattern(pattern, pkg.name);
   });
   const isTrusted = isTrustedFromConfig || KNOWN_LEGITIMATE_PACKAGES.has(pkg.name);
 
@@ -1744,6 +1758,609 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
   return false;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function forEachRegexMatch(content, regex, callback) {
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    callback(match);
+    if (regex.lastIndex === match.index) {
+      regex.lastIndex++;
+    }
+  }
+  regex.lastIndex = 0;
+}
+
+function findPreviousNonWhitespaceIndex(content, startIndex) {
+  for (let i = startIndex; i >= 0; i--) {
+    if (!/\s/.test(content[i])) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function getPreviousWord(content, index) {
+  const prevCharIndex = findPreviousNonWhitespaceIndex(content, index - 1);
+  if (prevCharIndex === -1) return null;
+
+  let end = prevCharIndex;
+  while (end >= 0 && /[A-Za-z0-9_$]/.test(content[end])) {
+    end--;
+  }
+  const word = content.slice(end + 1, prevCharIndex + 1);
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(word) ? word : null;
+}
+
+function parseDestructuredBindings(spec, isImport = false) {
+  const bindings = [];
+  const parts = spec.split(',');
+
+  for (const rawPart of parts) {
+    let part = rawPart.trim();
+    if (!part || part.startsWith('...')) continue;
+
+    // Drop default values in destructuring (`x = value`).
+    if (!isImport) {
+      const eqIndex = part.indexOf('=');
+      if (eqIndex !== -1) {
+        part = part.slice(0, eqIndex).trim();
+      }
+    }
+
+    if (isImport) {
+      const importMatch = part.match(/^([A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*))?$/);
+      if (!importMatch) continue;
+      const imported = importMatch[1];
+      const local = importMatch[2] || imported;
+      bindings.push({ imported, local });
+      continue;
+    }
+
+    const destructureMatch = part.match(/^([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*([A-Za-z_$][A-Za-z0-9_$]*))?$/);
+    if (!destructureMatch) continue;
+    const imported = destructureMatch[1];
+    const local = destructureMatch[2] || imported;
+    bindings.push({ imported, local });
+  }
+
+  return bindings;
+}
+
+function hasNearbyIndex(indexSet, target, maxDistance = 2) {
+  for (const index of indexSet) {
+    if (Math.abs(index - target) <= maxDistance) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasCrossSignalProximity(indicesA, indicesB, maxDistance = 320) {
+  for (const indexA of indicesA) {
+    for (const indexB of indicesB) {
+      if (Math.abs(indexA - indexB) <= maxDistance) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Lightweight parser signals for higher-precision matching without external deps.
+ */
+function collectLightweightCodeSignals(content) {
+  const signals = {
+    evalCallIndices: new Set(),
+    functionCtorCallIndices: new Set(),
+    timerStringCallIndices: new Set(),
+    vmCallIndices: new Set(),
+    envAccessIndices: new Set(),
+    nodeNetworkCallIndices: new Set(),
+    nodeNetworkKinds: new Map(),
+    childProcessCallIndices: new Set(),
+    childProcessMethodCalls: new Map(),
+    hasNodeNetworkUsage: false,
+    hasChildProcessUsage: false,
+  };
+
+  const declarationLikeKeywords = new Set(['function', 'class', 'const', 'let', 'var', 'get', 'set']);
+  const childProcessAliases = new Set();
+  const childProcessFunctionAliases = new Map();
+  const networkModuleAliases = {
+    http: new Set(),
+    https: new Set(),
+    dns: new Set(),
+    ws: new Set(),
+  };
+  const networkFunctionAliases = new Map();
+  const childProcessImportPrefix = "['\"`](?:node:)?child_process['\"`]";
+  const childMethodAlternation = '(exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)';
+  const networkImportPrefix = "['\"`](?:node:)?(https?|dns|ws)['\"`]";
+  const addNetworkCall = (index, kind) => {
+    signals.nodeNetworkCallIndices.add(index);
+    signals.nodeNetworkKinds.set(index, kind);
+  };
+
+  // ---------------- Eval-like call sites ----------------
+  forEachRegexMatch(content, /\beval\s*\(/g, (match) => {
+    const index = match.index;
+    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+
+    const prevNonWs = findPreviousNonWhitespaceIndex(content, index - 1);
+    if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
+    if (declarationLikeKeywords.has(getPreviousWord(content, index))) return;
+
+    signals.evalCallIndices.add(index);
+  });
+
+  forEachRegexMatch(content, /\bnew\s+Function\s*\(/g, (match) => {
+    const index = match.index;
+    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    signals.functionCtorCallIndices.add(index);
+  });
+
+  forEachRegexMatch(content, /\bFunction\s*\(/g, (match) => {
+    const index = match.index;
+    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+
+    const prevNonWs = findPreviousNonWhitespaceIndex(content, index - 1);
+    if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
+
+    const previousWord = getPreviousWord(content, index);
+    if (previousWord === 'new' || declarationLikeKeywords.has(previousWord)) return;
+
+    signals.functionCtorCallIndices.add(index);
+  });
+
+  forEachRegexMatch(content, /\b(?:setTimeout|setInterval)\s*\(\s*['"`]/g, (match) => {
+    const index = match.index;
+    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    signals.timerStringCallIndices.add(index);
+  });
+
+  forEachRegexMatch(content, /\bvm\.(?:runInContext|runInNewContext|runInThisContext|compileFunction)\s*\(/g, (match) => {
+    const index = match.index;
+    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    signals.vmCallIndices.add(index);
+  });
+
+  // ---------------- env + network call sites ----------------
+  forEachRegexMatch(content, /\bprocess\.env(?:\s*\[\s*['"`][^'"`]+['"`]\s*\]|\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)?/g, (match) => {
+    const index = match.index;
+    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    signals.envAccessIndices.add(index);
+  });
+
+  forEachRegexMatch(content, /\bfetch\s*\(/g, (match) => {
+    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    addNetworkCall(match.index, 'fetch');
+  });
+
+  forEachRegexMatch(content, /\b(?:axios|got|superagent|request|ky)\s*(?:\.\s*(?:get|post|put|patch|delete|request))?\s*\(/g, (match) => {
+    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    addNetworkCall(match.index, 'http-client');
+  });
+
+  forEachRegexMatch(content, /\bhttps?\.(?:request|get)\s*\(/g, (match) => {
+    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    addNetworkCall(match.index, 'http-module');
+  });
+
+  forEachRegexMatch(content, /\brequire\s*\(\s*['"`](?:node:)?https?['"`]\s*\)\s*\.\s*(?:request|get)\s*\(/g, (match) => {
+    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    addNetworkCall(match.index, 'http-module');
+  });
+
+  forEachRegexMatch(content, /\b(?:dns\.resolve|dns\.lookup)\s*\(/g, (match) => {
+    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    addNetworkCall(match.index, 'dns');
+  });
+
+  forEachRegexMatch(content, /\bnew\s+WebSocket\s*\(/g, (match) => {
+    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    addNetworkCall(match.index, 'websocket');
+  });
+
+  // ---------------- network imports/requires ----------------
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*require\\s*\\(\\s*${networkImportPrefix}\\s*\\)`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const alias = match[1];
+      const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
+      const aliasSet = networkModuleAliases[moduleName];
+      if (aliasSet) {
+        aliasSet.add(alias);
+      }
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\bimport\\s+\\*\\s+as\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+from\\s*${networkImportPrefix}`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const alias = match[1];
+      const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
+      const aliasSet = networkModuleAliases[moduleName];
+      if (aliasSet) {
+        aliasSet.add(alias);
+      }
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\bimport\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?:,\\s*\\{[^}]+\\})?\\s+from\\s*${networkImportPrefix}`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const alias = match[1];
+      const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
+      const aliasSet = networkModuleAliases[moduleName];
+      if (aliasSet) {
+        aliasSet.add(alias);
+      }
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\b(?:const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*require\\s*\\(\\s*${networkImportPrefix}\\s*\\)`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
+      const bindings = parseDestructuredBindings(match[1], false);
+      for (const { imported, local } of bindings) {
+        if (NETWORK_METHOD_NAMES.has(imported)) {
+          networkFunctionAliases.set(local, `${moduleName}.${imported}`);
+        }
+      }
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\bimport\\s*\\{([^}]+)\\}\\s*from\\s*${networkImportPrefix}`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
+      const bindings = parseDestructuredBindings(match[1], true);
+      for (const { imported, local } of bindings) {
+        if (NETWORK_METHOD_NAMES.has(imported)) {
+          networkFunctionAliases.set(local, `${moduleName}.${imported}`);
+        }
+      }
+    }
+  );
+
+  for (const moduleName of ['http', 'https']) {
+    for (const alias of networkModuleAliases[moduleName]) {
+      const memberCallRegex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*(request|get)\\s*\\(`, 'g');
+      forEachRegexMatch(content, memberCallRegex, (match) => {
+        if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+        addNetworkCall(match.index, 'http-module');
+      });
+    }
+  }
+
+  for (const alias of networkModuleAliases.dns) {
+    const memberCallRegex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*(resolve|lookup)\\s*\\(`, 'g');
+    forEachRegexMatch(content, memberCallRegex, (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      addNetworkCall(match.index, 'dns');
+    });
+  }
+
+  for (const alias of networkModuleAliases.ws) {
+    const wsCallRegex = new RegExp(`\\b(?:new\\s+)?${escapeRegExp(alias)}\\s*\\(`, 'g');
+    forEachRegexMatch(content, wsCallRegex, (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      addNetworkCall(match.index, 'websocket');
+    });
+  }
+
+  for (const [localFnName, methodKind] of networkFunctionAliases.entries()) {
+    const directCallRegex = new RegExp(`\\b${escapeRegExp(localFnName)}\\s*\\(`, 'g');
+    forEachRegexMatch(content, directCallRegex, (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const prevNonWs = findPreviousNonWhitespaceIndex(content, match.index - 1);
+      if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
+      if (declarationLikeKeywords.has(getPreviousWord(content, match.index))) return;
+      if (methodKind.startsWith('dns.')) {
+        addNetworkCall(match.index, 'dns');
+      } else {
+        addNetworkCall(match.index, 'http-module');
+      }
+    });
+  }
+
+  // ---------------- child_process imports/requires ----------------
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\b(?:const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*require\\s*\\(\\s*${childProcessImportPrefix}\\s*\\)`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const bindings = parseDestructuredBindings(match[1], false);
+      for (const { imported, local } of bindings) {
+        if (CHILD_PROCESS_METHOD_NAMES.has(imported)) {
+          childProcessFunctionAliases.set(local, imported);
+        }
+      }
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*require\\s*\\(\\s*${childProcessImportPrefix}\\s*\\)`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      childProcessAliases.add(match[1]);
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\bimport\\s+\\*\\s+as\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+from\\s*${childProcessImportPrefix}`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      childProcessAliases.add(match[1]);
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\bimport\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?:,\\s*\\{[^}]+\\})?\\s+from\\s*${childProcessImportPrefix}`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      childProcessAliases.add(match[1]);
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\bimport\\s*\\{([^}]+)\\}\\s*from\\s*${childProcessImportPrefix}`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const bindings = parseDestructuredBindings(match[1], true);
+      for (const { imported, local } of bindings) {
+        if (CHILD_PROCESS_METHOD_NAMES.has(imported)) {
+          childProcessFunctionAliases.set(local, imported);
+        }
+      }
+    }
+  );
+
+  forEachRegexMatch(
+    content,
+    new RegExp(`\\brequire\\s*\\(\\s*${childProcessImportPrefix}\\s*\\)\\s*\\.\\s*${childMethodAlternation}\\s*\\(`, 'g'),
+    (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const method = match[1];
+      const methodIndex = match.index + match[0].lastIndexOf(method);
+      signals.childProcessCallIndices.add(methodIndex);
+      signals.childProcessMethodCalls.set(methodIndex, method);
+    }
+  );
+
+  for (const alias of childProcessAliases) {
+    const memberCallRegex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*${childMethodAlternation}\\s*\\(`, 'g');
+    forEachRegexMatch(content, memberCallRegex, (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      const method = match[1];
+      const methodIndex = match.index + match[0].lastIndexOf(method);
+      signals.childProcessCallIndices.add(methodIndex);
+      signals.childProcessMethodCalls.set(methodIndex, method);
+    });
+  }
+
+  for (const [localFnName, importedMethod] of childProcessFunctionAliases.entries()) {
+    const directCallRegex = new RegExp(`\\b${escapeRegExp(localFnName)}\\s*\\(`, 'g');
+    forEachRegexMatch(content, directCallRegex, (match) => {
+      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+
+      const prevNonWs = findPreviousNonWhitespaceIndex(content, match.index - 1);
+      if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
+      if (declarationLikeKeywords.has(getPreviousWord(content, match.index))) return;
+
+      signals.childProcessCallIndices.add(match.index);
+      signals.childProcessMethodCalls.set(match.index, importedMethod);
+    });
+  }
+
+  signals.hasNodeNetworkUsage = signals.nodeNetworkCallIndices.size > 0;
+  signals.hasChildProcessUsage = signals.childProcessCallIndices.size > 0;
+  return signals;
+}
+
+function isEvalPatternBackedBySignals(pattern, matchIndex, signals) {
+  const source = pattern.source;
+  if (source.includes('\\beval\\s*\\(')) {
+    return hasNearbyIndex(signals.evalCallIndices, matchIndex);
+  }
+  if (source.includes('new\\s+Function')) {
+    return hasNearbyIndex(signals.functionCtorCallIndices, matchIndex);
+  }
+  if (source.includes('\\bFunction\\s*\\(')) {
+    return hasNearbyIndex(signals.functionCtorCallIndices, matchIndex);
+  }
+  if (source.includes('setTimeout') || source.includes('setInterval')) {
+    return hasNearbyIndex(signals.timerStringCallIndices, matchIndex);
+  }
+  if (source.includes('vm\\.')) {
+    return hasNearbyIndex(signals.vmCallIndices, matchIndex);
+  }
+  return true;
+}
+
+function getMethodForChildProcessPattern(pattern) {
+  const source = pattern.source;
+  if (source.includes('execFileSync')) return 'execFileSync';
+  if (source.includes('execFile')) return 'execFile';
+  if (source.includes('execSync')) return 'execSync';
+  if (source.includes('spawnSync')) return 'spawnSync';
+  if (source.includes('spawn')) return 'spawn';
+  if (source.includes('fork')) return 'fork';
+  if (source.includes('exec')) return 'exec';
+  return null;
+}
+
+function isChildProcessPatternBackedBySignals(pattern, matchIndex, signals) {
+  if (!signals.hasChildProcessUsage) {
+    return false;
+  }
+
+  const method = getMethodForChildProcessPattern(pattern);
+  if (!method) {
+    return signals.childProcessCallIndices.size > 0;
+  }
+
+  for (const [index, callMethod] of signals.childProcessMethodCalls.entries()) {
+    if (callMethod === method && Math.abs(index - matchIndex) <= 2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getNodeNetworkKindForPattern(pattern) {
+  const source = pattern.source;
+  if (source.includes('fetch')) return 'fetch';
+  if (source.includes('axios') || source.includes('got') || source.includes('ky') || source.includes('superagent')) {
+    return 'http-client';
+  }
+  if (source.includes('request\\s*\\(') || source.includes('https?\\.request') || source.includes('https?\\.get')) {
+    return 'http-module';
+  }
+  if (source.includes('dns\\.resolve') || source.includes('dns\\.lookup')) {
+    return 'dns';
+  }
+  if (source.includes('WebSocket') || source.includes("['\"`]ws['\"`]") || source.includes('ws\\.')) {
+    return 'websocket';
+  }
+  return null;
+}
+
+function isNodeNetworkPatternBackedBySignals(pattern, matchIndex, signals) {
+  if (!signals.hasNodeNetworkUsage) {
+    return false;
+  }
+
+  const kind = getNodeNetworkKindForPattern(pattern);
+  if (!kind) {
+    return signals.nodeNetworkCallIndices.size > 0;
+  }
+
+  for (const [index, callKind] of signals.nodeNetworkKinds.entries()) {
+    if (callKind === kind && Math.abs(index - matchIndex) <= 3) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasEnvToCapabilityFlow(content, signals) {
+  if (signals.envAccessIndices.size === 0) {
+    return false;
+  }
+
+  const capabilityIndices = new Set([
+    ...signals.nodeNetworkCallIndices,
+    ...signals.childProcessCallIndices,
+  ]);
+
+  if (capabilityIndices.size === 0) {
+    return false;
+  }
+
+  if (hasCrossSignalProximity(signals.envAccessIndices, capabilityIndices, 420)) {
+    return true;
+  }
+
+  const envToCapability = /process\.env(?:\s*\[[^\]]+\]|\s*\.[A-Za-z_$][A-Za-z0-9_$]*)?[\s\S]{0,220}(?:fetch\s*\(|axios\b|got\b|superagent\b|ky\b|https?\.(?:request|get)\s*\(|(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\()/i;
+  const capabilityToEnv = /(?:fetch\s*\(|axios\b|got\b|superagent\b|ky\b|https?\.(?:request|get)\s*\(|(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\()[\s\S]{0,220}process\.env(?:\s*\[[^\]]+\]|\s*\.[A-Za-z_$][A-Za-z0-9_$]*)?/i;
+  if (envToCapability.test(content) || capabilityToEnv.test(content)) {
+    return true;
+  }
+
+  const exposesWholeEnv = /JSON\.stringify\s*\(\s*process\.env\s*\)|\.\.\.\s*process\.env/.test(content);
+  if (exposesWholeEnv && capabilityIndices.size > 0) {
+    return true;
+  }
+
+  return false;
+}
+
+function collectEnvVariableNames(content) {
+  const envNames = new Set();
+
+  forEachRegexMatch(content, /process\.env\.([A-Za-z_$][A-Za-z0-9_$]*)/g, (match) => {
+    if (match[1]) {
+      envNames.add(match[1]);
+    }
+  });
+
+  forEachRegexMatch(content, /process\.env\[\s*['"`]([^'"`]+)['"`]\s*\]/g, (match) => {
+    if (match[1]) {
+      envNames.add(match[1]);
+    }
+  });
+
+  return Array.from(envNames);
+}
+
+function isLikelySensitiveEnvVar(varName) {
+  if (!varName) return false;
+  const normalized = varName.toUpperCase();
+
+  const safeExact = new Set([
+    'NODE_ENV',
+    'NODE_DEBUG',
+    'DEBUG',
+    'NO_COLOR',
+    'FORCE_COLOR',
+    'CI',
+    'TZ',
+    'LANG',
+    'HOME',
+    'USER',
+    'PATH',
+    'SHELL',
+    'PWD',
+  ]);
+
+  if (safeExact.has(normalized)) {
+    return false;
+  }
+
+  const safePrefixes = [
+    'NODE_',
+    'NPM_CONFIG_',
+    'NPM_PACKAGE_',
+    'NPM_LIFECYCLE_',
+    'YARN_',
+    'PNPM_',
+    'BUN_',
+    'ESBUILD_',
+    'NAPI_RS_',
+    'PARCEL_',
+    'VITE_',
+    'NEXT_',
+    'NUXT_',
+    'SVELTEKIT_',
+  ];
+
+  if (safePrefixes.some(prefix => normalized.startsWith(prefix))) {
+    return false;
+  }
+
+  return /(TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|API[_-]?KEY|ACCESS[_-]?KEY|AUTH|SESSION|COOKIE|BEARER|SSH|GITHUB|AWS|NPM_)/.test(normalized);
+}
+
 /**
  * Deep code analysis (optional, slower)
  */
@@ -1762,6 +2379,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
 
       const content = fs.readFileSync(filePath, 'utf8');
       const relativePath = path.relative(pkg.dir, filePath);
+      const codeSignals = collectLightweightCodeSignals(content);
 
       // Check for eval patterns - reduce false positives
       for (const pattern of EVAL_PATTERNS) {
@@ -1772,6 +2390,10 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           
           // Skip if match is in comment, string, or regex definition
           if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+            continue;
+          }
+
+          if (!isEvalPatternBackedBySignals(pattern, patternMatch.index, codeSignals)) {
             continue;
           }
           
@@ -1950,9 +2572,17 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         if (patternMatch) {
           // Reset regex lastIndex for next use
           pattern.lastIndex = 0;
-          
-          // Skip if match is in comment, string, or regex definition
-          if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+
+          const hasAstSupport = isChildProcessPatternBackedBySignals(pattern, patternMatch.index, codeSignals);
+          if (!hasAstSupport) {
+            continue;
+          }
+
+          const matchInNonExecutableContext = isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length);
+          const isChildProcessSpecifierPattern = pattern.source === 'child_process';
+
+          // Allow child_process module specifier strings only when we already have AST-backed usage.
+          if (matchInNonExecutableContext && !isChildProcessSpecifierPattern) {
             continue;
           }
           
@@ -2179,6 +2809,10 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
               continue;
             }
+
+            if (!isNodeNetworkPatternBackedBySignals(pattern, patternMatch.index, codeSignals)) {
+              continue;
+            }
             
             // Skip if it's in a test directory (tests often mock network calls)
             const isTestFile = /(?:^|\/)(?:test|spec|__tests__|__mocks__)(?:\/|$)/i.test(relativePath);
@@ -2250,6 +2884,12 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       }
       
       if (envMatch) {
+        if (!codeSignals.hasNodeNetworkUsage && !codeSignals.hasChildProcessUsage) {
+          continue;
+        }
+
+        const hasAstEnvFlow = hasEnvToCapabilityFlow(content, codeSignals);
+
         // Skip known legitimate packages that use env vars (ESLint, config loaders, etc.)
         // IMPORTANT: Use exact matches or trusted scopes to avoid missing typosquatting attacks
         const isKnownLegitimateEnv = pkg && (
@@ -2301,6 +2941,9 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           if (match) {
             pattern.lastIndex = 0;
             if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+              if (!isNodeNetworkPatternBackedBySignals(pattern, match.index, codeSignals)) {
+                continue;
+              }
               nodeNetworkMatch = pattern;
               break;
             }
@@ -2313,22 +2956,31 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           const match = pattern.exec(content);
           if (match) {
             pattern.lastIndex = 0;
-            if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
-              // For exec/spawn patterns, verify they're actually function calls, not just the word "exec"
-              if (pattern.source.includes('exec') || pattern.source.includes('spawn') || pattern.source.includes('fork')) {
-                // Check that it's actually a function call, not part of a variable name
-                const beforeMatch = content.slice(Math.max(0, match.index - 20), match.index);
-                const afterMatch = content.slice(match.index + match[0].length, match.index + match[0].length + 20);
-                // Should be preceded by whitespace, dot, or start of line, and followed by (
-                const isActualCall = /(?:^|\s|\.|\(|,|;|:)$/.test(beforeMatch.slice(-1)) && /^\s*\(/.test(afterMatch);
-                if (!isActualCall) {
-                  continue; // Skip - not an actual function call
-                }
-              }
-              childProcessMatch = pattern;
-              childProcessMatchIndex = match.index;
-              break;
+            const hasAstSupport = isChildProcessPatternBackedBySignals(pattern, match.index, codeSignals);
+            if (!hasAstSupport) {
+              continue;
             }
+
+            const matchInNonExecutableContext = isMatchInNonExecutableContext(content, match.index, match[0].length);
+            const isChildProcessSpecifierPattern = pattern.source === 'child_process';
+            if (matchInNonExecutableContext && !isChildProcessSpecifierPattern) {
+              continue;
+            }
+
+            // For exec/spawn patterns, verify they're actually function calls, not just the word "exec"
+            if (pattern.source.includes('exec') || pattern.source.includes('spawn') || pattern.source.includes('fork')) {
+              // Check that it's actually a function call, not part of a variable name
+              const beforeMatch = content.slice(Math.max(0, match.index - 20), match.index);
+              const afterMatch = content.slice(match.index + match[0].length, match.index + match[0].length + 20);
+              // Should be preceded by whitespace, dot, or start of line, and followed by (
+              const isActualCall = /(?:^|\s|\.|\(|,|;|:)$/.test(beforeMatch.slice(-1)) && /^\s*\(/.test(afterMatch);
+              if (!isActualCall) {
+                continue; // Skip - not an actual function call
+              }
+            }
+            childProcessMatch = pattern;
+            childProcessMatchIndex = match.index;
+            break;
           }
         }
         
@@ -2341,7 +2993,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         // Check if it's a simple debug/env check (common and safe)
         // Examples: process.env.DEBUG, process.env.NODE_ENV, process.env.NO_COLOR, process.env.NODE_DEBUG
         const envContext = content.slice(Math.max(0, envMatchIndex - 50), Math.min(content.length, envMatchIndex + 100));
-        const simpleEnvCheck = envMatchText && /process\.env\.(NODE_DEBUG|DEBUG|NODE_ENV|NO_COLOR|FORCE_COLOR|CI|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD)/i.test(envContext);
+        const simpleEnvCheck = envMatchText && /process\.env\.(NODE_DEBUG|DEBUG|NODE_ENV|NO_COLOR|FORCE_COLOR|CI|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD|NPM_CONFIG_[A-Z0-9_]+|NPM_PACKAGE_[A-Z0-9_]+|ESBUILD_[A-Z0-9_]+|NAPI_RS_[A-Z0-9_]+)/i.test(envContext);
         
         // If only safe env vars are accessed (like NODE_DEBUG) and there's no actual exec() call, skip
         // The pattern might match "exec" in comments or variable names
@@ -2361,7 +3013,14 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         // Only flag if it's NOT a known framework/library pattern
         // Most legitimate packages use process.env for config, not for exfiltration
         // Only flag if there are suspicious patterns (like actual exfiltration attempts)
-        if (networkMatch || nodeNetworkMatch || childProcessMatch) {
+        const hasNetworkCapability = Boolean(networkMatch || nodeNetworkMatch);
+        const hasExecCapability = Boolean(childProcessMatch);
+
+        if (hasNetworkCapability || hasExecCapability) {
+          if (!hasAstEnvFlow && !(hasNetworkCapability && hasExecCapability)) {
+            continue;
+          }
+
           // Check if it's an install script (install.js in package root)
           // Install scripts often legitimately use process.env + network for downloading binaries
           // We check the file path, not package name - all packages are treated equally
@@ -2370,7 +3029,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           
           // If it's just a simple env check (NODE_DEBUG, etc.) and network access, skip
           // These are common and safe patterns
-          if (simpleEnvCheck && (nodeNetworkMatch || networkMatch) && !childProcessMatch) {
+          if (simpleEnvCheck && (nodeNetworkMatch || networkMatch) && !hasExecCapability) {
             // Check if network access is also simple (like in a comment or test)
             const networkMatchObj = nodeNetworkMatch || networkMatch;
             let networkMatchIdx = -1;
@@ -2397,44 +3056,60 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           // Analyze context: is env actually passed to network/exec, or just used locally?
           // Use broader context for analysis (envContext was already defined earlier, but we need more context)
           const broaderEnvContext = content.slice(Math.max(0, envMatchIndex - 150), Math.min(content.length, envMatchIndex + 300));
-          const envPassedToExec = /(?:env|process\.env).*[:=].*(?:spawn|exec|fork|child_process)/i.test(broaderEnvContext) ||
-                                  /(?:spawn|exec|fork).*\{[^}]*env/i.test(broaderEnvContext) ||
-                                  /(?:spawn|exec|fork).*\{[^}]*\.\.\.process\.env/i.test(broaderEnvContext);
+          const envPassedToExec = /(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\([^)]*(?:process\.env|env\s*:)/i.test(broaderEnvContext) ||
+                                  /child_process\.(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\([^)]*(?:process\.env|env\s*:)/i.test(broaderEnvContext);
+
+          const envVariableNames = collectEnvVariableNames(content);
+          const hasSensitiveEnvAccess = envVariableNames.some(isLikelySensitiveEnvVar);
           
           // Check if env is used only for local config (less suspicious)
           const envUsedLocally = /process\.env\.(?:NODE_ENV|DEBUG|CI|FORCE_COLOR|NO_COLOR|TZ|LANG|LC_|HOME|USER|PATH|SHELL|PWD|HADOOP_HOME|LIBC|FORMAT_START)/i.test(envContext);
           
           // Check if it's just passing entire process.env to child_process (common pattern)
           const passesFullEnv = /(?:env|process\.env).*[:=].*process\.env|\.\.\.process\.env/i.test(broaderEnvContext);
+
+          // Reduce false positives:
+          // - env + child_process alone is common in build scripts unless env looks sensitive/passed through
+          // - install scripts often use benign env + network for binary downloads
+          if (!hasNetworkCapability && hasExecCapability && !hasSensitiveEnvAccess && !envPassedToExec && !passesFullEnv) {
+            continue;
+          }
           
-          // Determine severity based on context - no package is trusted by default
-          // CRITICAL: If there's network access, always critical (most dangerous pattern)
-          // This is a known supply chain attack pattern: env + network + exec
-          let severity = 'critical';
+          // Determine severity based on context.
+          // Mark as CRITICAL only when network capability is combined with clearly sensitive env usage.
+          let severity = 'high';
           
-          // Only lower severity if there's NO network access (only child_process)
-          // If network is present, it's always critical - could be exfiltrating credentials
-          const hasNetwork = networkMatch || nodeNetworkMatch;
+          const hasNetwork = hasNetworkCapability;
           
           if (hasNetwork) {
-            // env + network + exec = CRITICAL (supply chain attack pattern)
-            severity = 'critical';
+            if (hasSensitiveEnvAccess || envPassedToExec || passesFullEnv) {
+              // env + sensitive data + network = CRITICAL
+              severity = 'critical';
+            } else if (isInstallScriptFile) {
+              // install scripts commonly download binaries based on env settings
+              severity = 'medium';
+            } else {
+              severity = 'high';
+            }
           } else if (isInstallScriptFile) {
             // Install scripts with env + child_process (no network) - medium
             severity = 'medium';
-          } else if (envUsedLocally && !envPassedToExec && childProcessMatch) {
+          } else if (envUsedLocally && !envPassedToExec && hasExecCapability) {
             // If env is only used locally (like NODE_ENV) and only child_process (no network), lower severity
             severity = 'medium';
-          } else if (passesFullEnv && childProcessMatch) {
+          } else if (passesFullEnv && hasExecCapability) {
             // Passing full process.env to child_process is common pattern, but still review
             severity = 'medium';
           }
-          // Otherwise: env + child_process (unknown pattern) = critical
           
           // Determine recommendation based on severity
           let recommendation;
-          if (hasNetwork) {
+          if (severity === 'critical') {
             recommendation = 'DANGER: This pattern (env + network + exec) matches known credential exfiltration attack patterns. Investigate immediately.';
+          } else if (hasNetwork && severity === 'high') {
+            recommendation = 'Network + environment usage can be risky. Verify only non-sensitive env vars are used and data is not exfiltrated.';
+          } else if (hasNetwork && severity === 'medium') {
+            recommendation = 'Likely install-time bootstrap behavior. Verify downloaded source and ensure no sensitive env vars are transmitted.';
           } else if (isInstallScriptFile) {
             recommendation = 'Install scripts often use env vars + child_process. Review to ensure it\'s legitimate and not exfiltrating data.';
           } else if (severity === 'medium') {
@@ -2469,6 +3144,8 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 networkPattern: (nodeNetworkMatch || networkMatch)?.source,
                 childProcessPattern: childProcessMatch?.source || null,
                 envAccessPoints: envMatches,
+                envVariables: envVariableNames,
+                hasSensitiveEnvAccess,
               },
               envCodeSnippet: envSnippet?.snippet || null,
               envLineNumber: envSnippet?.lineNumber || null,
@@ -2477,7 +3154,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               networkLineNumber: execSnippet?.lineNumber || null,
               networkIsMinified: execSnippet?.isMinified || false,
               falsePositiveHints: [
-                hasNetwork ? '⚠ CRITICAL: matches known credential exfiltration attack patterns' : null,
+                hasNetwork && severity === 'critical' ? '⚠ CRITICAL: matches known credential exfiltration attack patterns' : null,
                 isInstallScriptFile ? '⚠ This appears to be an install script - may legitimately use child_process' : null,
                 !hasNetwork && envUsedLocally && !envPassedToExec ? '✓ Environment variables appear to be used only for local configuration (no network detected)' : null,
                 !hasNetwork && passesFullEnv ? '✓ Passing full process.env to child_process is a common pattern (but still review - no network detected)' : null,
@@ -2486,8 +3163,10 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 'Check what env vars are accessed and where data is sent',
                 hasNetwork ? '⚠ Network access combined with env + exec = potential credential exfiltration' : null,
               ].filter(Boolean),
-              riskAssessment: hasNetwork || severity === 'critical'
+              riskAssessment: severity === 'critical'
                 ? 'CRITICAL - matches known credential exfiltration attack patterns'
+                : severity === 'high'
+                ? 'HIGH - network capability with environment access requires review'
                 : isInstallScriptFile 
                 ? 'MEDIUM - Install scripts often use env + child_process legitimately, but should be reviewed'
                 : 'MEDIUM - Pattern can be legitimate (no network detected), review to ensure no credential exfiltration',

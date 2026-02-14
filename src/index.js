@@ -21,7 +21,7 @@ const { buildLockIndex } = require('./lockfile');
 const { collectPackages, safeReadJSONWithDetails } = require('./collector');
 const { analyzePackage } = require('./analyzer');
 const { formatText, formatJson, formatSarif } = require('./formatters');
-const { color, colors } = require('./utils');
+const { color, colors, matchesGlobPattern } = require('./utils');
 
 const pkgMeta = (safeReadJSONWithDetails(path.join(__dirname, '..', 'package.json')).data) || {};
 
@@ -122,6 +122,10 @@ function run(argv = process.argv) {
   }
 
   // Load and merge configuration
+  if (args.configPath && !fs.existsSync(args.configPath)) {
+    throw new Error(`Config file or directory not found: ${args.configPath}`);
+  }
+
   const fileConfig = args.configPath 
     ? loadConfig(args.configPath)
     : loadConfig(process.cwd());
@@ -151,7 +155,7 @@ function run(argv = process.argv) {
 
   for (const pkg of packages) {
     // Skip ignored packages
-    if (config.ignoredPackages.some(pattern => matchPattern(pattern, pkg.name))) {
+    if (config.ignoredPackages.some(pattern => matchesGlobPattern(pattern, pkg.name))) {
       continue;
     }
 
@@ -215,14 +219,6 @@ function run(argv = process.argv) {
   }
 
   return { exitCode: 0, issues, summary };
-}
-
-function matchPattern(pattern, name) {
-  if (pattern.includes('*')) {
-    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-    return regex.test(name);
-  }
-  return pattern === name;
 }
 
 function printHelp() {

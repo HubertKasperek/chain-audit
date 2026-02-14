@@ -91,6 +91,18 @@ describe('parseNonNegativeInt', () => {
       parseNonNegativeInt('abc', '--test');
     }, /must be a/);
   });
+
+  it('should throw on decimal values', () => {
+    assert.throws(() => {
+      parseNonNegativeInt('1.5', '--test');
+    }, /must be a/);
+  });
+
+  it('should throw on mixed alphanumeric values', () => {
+    assert.throws(() => {
+      parseNonNegativeInt('10abc', '--test');
+    }, /must be a/);
+  });
 });
 
 describe('levenshteinDistance', () => {

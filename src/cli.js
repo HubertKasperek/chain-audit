@@ -56,8 +56,14 @@ function parseCommaSeparatedList(value) {
  * @returns {number} Parsed non-negative integer
  */
 function parseNonNegativeInt(value, flag, allowZero = false) {
-  const num = parseInt(value, 10);
-  if (isNaN(num) || num < 0 || (!allowZero && num === 0)) {
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) {
+    const msg = allowZero ? 'non-negative integer' : 'positive integer';
+    throw new Error(`${flag} must be a ${msg}, got "${value}"`);
+  }
+
+  const num = Number(raw);
+  if (!Number.isSafeInteger(num) || num < 0 || (!allowZero && num === 0)) {
     const msg = allowZero ? 'non-negative integer' : 'positive integer';
     throw new Error(`${flag} must be a ${msg}, got "${value}"`);
   }
