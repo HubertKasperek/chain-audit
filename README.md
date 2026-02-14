@@ -1,6 +1,6 @@
 # chain-audit
 
-[![CI](https://github.com/hukasx0/chain-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/hukasx0/chain-audit/actions/workflows/ci.yml)
+[![CI](https://github.com/HubertKasperek/chain-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/HubertKasperek/chain-audit/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/chain-audit.svg)](https://www.npmjs.com/package/chain-audit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/chain-audit.svg)](https://nodejs.org)
@@ -50,7 +50,7 @@ bun add -d chain-audit
 
 > **Note:** In 99.99% of cases, `npm install -g chain-audit` is sufficient. Standalone executables are only for special cases where Node.js, npm, Bun, or other package managers are unavailable or installation is restricted.
 
-Pre-built standalone executables are available in the [GitHub Releases](https://github.com/hukasx0/chain-audit/releases) for Linux (x64 and ARM64). These are self-contained binaries that don't require Node.js or Bun to be installed.
+Pre-built standalone executables are available in the [GitHub Releases](https://github.com/HubertKasperek/chain-audit/releases) for Linux (x64 and ARM64). These are self-contained binaries that don't require Node.js or Bun to be installed.
 
 **Use cases for standalone executables:**
 - CI/CD environments without Node.js
@@ -62,7 +62,7 @@ You can also compile chain-audit to a standalone binary yourself (For Linux, Win
 
 ```bash
 # Clone the repository
-git clone https://github.com/hukasx0/chain-audit.git
+git clone https://github.com/HubertKasperek/chain-audit.git
 cd chain-audit
 
 # Compile to single executable
@@ -183,7 +183,7 @@ Issues will be displayed sorted by severity (highest first), then by package nam
 ## Example Output
 
 ```
-chain-audit v0.6.6
+chain-audit v0.6.8
 Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules
 ────────────────────────────────────────────────────────────
 
@@ -431,7 +431,7 @@ on: [push, pull_request]
 
 jobs:
   scan:
-    uses: hukasx0/chain-audit/.github/workflows/scan.yml@main
+    uses: HubertKasperek/chain-audit/.github/workflows/scan.yml@main
     with:
       fail-on: high
       scan-code: false
@@ -591,11 +591,11 @@ npm rebuild
 
 ## Contributing
 
-**Repository:** [github.com/hukasx0/chain-audit](https://github.com/hukasx0/chain-audit)
+**Repository:** [github.com/HubertKasperek/chain-audit](https://github.com/HubertKasperek/chain-audit)
 
 ```bash
 # Clone and install
-git clone https://github.com/hukasx0/chain-audit.git
+git clone https://github.com/HubertKasperek/chain-audit.git
 cd chain-audit
 npm install
 
@@ -613,7 +613,7 @@ node src/index.js --node-modules /path/to/project/node_modules
 
 Hubert Kasperek
 
-[MIT License](https://github.com/hukasx0/chain-audit/blob/main/LICENSE)
+[MIT License](https://github.com/HubertKasperek/chain-audit/blob/main/LICENSE)
 
 ---
 

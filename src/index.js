@@ -25,7 +25,7 @@ const { color, colors } = require('./utils');
 
 const pkgMeta = (safeReadJSONWithDetails(path.join(__dirname, '..', 'package.json')).data) || {};
 
-function detectDefaultLockfile(cwd) {
+function detectDefaultLockfile(searchStartDirs) {
   const candidates = [
     'package-lock.json',
     'npm-shrinkwrap.json',
@@ -33,10 +33,31 @@ function detectDefaultLockfile(cwd) {
     'pnpm-lock.yaml',
     'bun.lock',
   ];
-  for (const candidate of candidates) {
-    const full = path.resolve(cwd, candidate);
-    if (fs.existsSync(full)) return full;
+
+  const starts = Array.isArray(searchStartDirs) ? searchStartDirs : [searchStartDirs];
+  const visited = new Set();
+
+  for (const start of starts) {
+    if (!start) continue;
+
+    let currentDir = path.resolve(start);
+    while (true) {
+      if (!visited.has(currentDir)) {
+        visited.add(currentDir);
+        for (const candidate of candidates) {
+          const full = path.join(currentDir, candidate);
+          if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+            return full;
+          }
+        }
+      }
+
+      const parent = path.dirname(currentDir);
+      if (parent === currentDir) break;
+      currentDir = parent;
+    }
   }
+
   return null;
 }
 
@@ -120,7 +141,8 @@ function run(argv = process.argv) {
   }
 
   // Resolve lockfile
-  const resolvedLock = config.lockPath || detectDefaultLockfile(process.cwd());
+  const scanRoot = path.dirname(config.nodeModules);
+  const resolvedLock = config.lockPath || detectDefaultLockfile([scanRoot, process.cwd()]);
   const lockIndex = buildLockIndex(resolvedLock);
 
   // Collect and analyze packages
@@ -157,6 +179,7 @@ function run(argv = process.argv) {
   }
 
   const summary = summarize(filteredIssues);
+  const overallSummary = summarize(issues);
   const context = {
     nodeModules: config.nodeModules,
     lockfile: lockIndex.lockPresent ? resolvedLock : null,
@@ -187,7 +210,7 @@ function run(argv = process.argv) {
   const severityOrder = ['info', 'low', 'medium', 'high', 'critical'];
   const rankSeverity = (level) => level === null ? -1 : severityOrder.indexOf(level);
 
-  if (config.failOn && summary.maxSeverity !== null && rankSeverity(summary.maxSeverity) >= rankSeverity(config.failOn)) {
+  if (config.failOn && overallSummary.maxSeverity !== null && rankSeverity(overallSummary.maxSeverity) >= rankSeverity(config.failOn)) {
     return { exitCode: 1, issues, summary };
   }
 
@@ -315,7 +338,7 @@ ${color('DISCLAIMER:', colors.bold)}
   manually and use as part of defense-in-depth.
 
 ${color('MORE INFO:', colors.bold)}
-  https://github.com/hukasx0/chain-audit
+  https://github.com/HubertKasperek/chain-audit
 `;
   console.log(text);
 }
