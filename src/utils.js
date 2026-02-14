@@ -83,6 +83,41 @@ function meetsThreshold(severity, threshold) {
   return rankSeverity(severity) >= rankSeverity(threshold);
 }
 
+/**
+ * Escape regex special characters in a string.
+ * @param {string} text - Raw text to escape
+ * @returns {string} Escaped text
+ */
+function escapeRegExp(text) {
+  return String(text).replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+}
+
+/**
+ * Convert a simple glob pattern with "*" wildcard to RegExp.
+ * @param {string} pattern - Glob pattern (supports only *)
+ * @returns {RegExp} Compiled regular expression
+ */
+function globToRegExp(pattern) {
+  const escaped = escapeRegExp(pattern);
+  return new RegExp(`^${escaped.replace(/\*/g, '.*')}$`);
+}
+
+/**
+ * Match value against a simple glob pattern (supports only *).
+ * @param {string} pattern - Pattern to match
+ * @param {string} value - Value to test
+ * @returns {boolean} True when value matches the pattern
+ */
+function matchesGlobPattern(pattern, value) {
+  if (typeof pattern !== 'string' || typeof value !== 'string') {
+    return false;
+  }
+  if (!pattern.includes('*')) {
+    return pattern === value;
+  }
+  return globToRegExp(pattern).test(value);
+}
+
 module.exports = {
   colors,
   color,
@@ -91,4 +126,7 @@ module.exports = {
   rankSeverity,
   compareSeverity,
   meetsThreshold,
+  escapeRegExp,
+  globToRegExp,
+  matchesGlobPattern,
 };

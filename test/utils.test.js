@@ -2,7 +2,17 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
-const { color, colors, useColor, rankSeverity, compareSeverity, meetsThreshold, SEVERITY_ORDER } = require('../src/utils');
+const {
+  color,
+  colors,
+  useColor,
+  rankSeverity,
+  compareSeverity,
+  meetsThreshold,
+  SEVERITY_ORDER,
+  globToRegExp,
+  matchesGlobPattern,
+} = require('../src/utils');
 
 describe('color', () => {
   it('should apply color codes when colors are enabled', () => {
@@ -127,5 +137,24 @@ describe('colors', () => {
   it('should have ANSI escape sequences', () => {
     assert.ok(colors.red.startsWith('\x1b['));
     assert.ok(colors.green.startsWith('\x1b['));
+  });
+});
+
+describe('glob matching', () => {
+  it('should match plain exact values when no wildcard is used', () => {
+    assert.strictEqual(matchesGlobPattern('lodash', 'lodash'), true);
+    assert.strictEqual(matchesGlobPattern('lodash', 'lodash-es'), false);
+  });
+
+  it('should match wildcard patterns safely', () => {
+    assert.strictEqual(matchesGlobPattern('@types/*', '@types/node'), true);
+    assert.strictEqual(matchesGlobPattern('@types/*', '@scope/node'), false);
+  });
+
+  it('should escape regex characters in glob patterns', () => {
+    const regex = globToRegExp('*[');
+    assert.ok(regex.test('pkg['));
+    assert.ok(!regex.test('pkg'));
+    assert.strictEqual(matchesGlobPattern('*[', 'pkg['), true);
   });
 });
