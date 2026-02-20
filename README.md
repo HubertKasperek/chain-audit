@@ -251,7 +251,7 @@ The trust score (0-100) is calculated based on multiple factors:
 | **Has author** | +10 | Package has author information |
 | **Has license** | +10 | Package has a license field |
 
-**Note:** Trust score is calculated independently from the `trustedPackages` config option. The `trustedPackages` config option affects severity levels for install scripts, but does not influence the trust score calculation. By default, no packages are whitelisted in the trust score calculation. All packages are checked with equal severity.
+**Note:** Trust score is calculated independently from the `trustedPackages` config option. The `trustedPackages` config option affects severity levels for install scripts, but does not influence the trust score calculation. By default, trust-score whitelists are empty. Packages are analyzed by default, with rule-specific heuristics reducing obvious false positives in some contexts.
 
 **Trust Levels:**
 - **High (70-100)**: Package is likely legitimate (e.g., has repository, homepage, author, and license)
@@ -497,7 +497,7 @@ chain-audit automatically detects and parses:
 | `yarn.lock` | Yarn Classic & Berry |
 | `pnpm-lock.yaml` | pnpm |
 | `bun.lock` | Bun (text format) |
-| `bun.lockb` | Bun (binary format, not supported - use `bun install --save-text-lockfile` to generate text format) |
+| `bun.lockb` | Bun (binary format: recognized when provided via `--lock`, but not parsed - use `bun install --save-text-lockfile` to generate text format) |
 
 ## Detection Rules
 
@@ -521,7 +521,7 @@ chain-audit automatically detects and parses:
 
 ### Critical Severity (with `--scan-code`)
 - **obfuscated_code** – Base64/hex encoded strings, char code arrays
-- **env_with_network** – Code accesses env vars and has network/exec capabilities (critical when network access is present, medium for install scripts without network)
+- **env_with_network** – Code accesses env vars and has network/exec capabilities (critical for sensitive env + network/exec flows, high for other network cases, medium in lower-risk install-script/no-network contexts)
 
 ### Medium Severity
 - **extraneous_package** – Package in node_modules not in lockfile (requires `--check-lockfile`)
@@ -587,7 +587,7 @@ npm rebuild
 6. **Recommended: Use `--scan-code --detailed` for thorough analysis** – Deep code scanning with detailed evidence (slower but most comprehensive)
 7. **Use `--detailed` for manual investigation** – Get code snippets and trust assessment to distinguish false positives (`--verbose` is an alias)
 8. **Keep registry secure** – Use private registry or npm audit signatures
-9. **All packages are checked equally** – No packages are whitelisted by default. Even popular packages like `sharp`, `esbuild`, or `@babel/*` are checked for malicious patterns. This ensures that compromised packages are detected regardless of their reputation.
+9. **No global whitelist by default** – There is no global trusted package/scope whitelist enabled by default, so popular packages like `sharp`, `esbuild`, or `@babel/*` are still analyzed. Some rule-specific heuristics may lower severity or skip likely false positives.
 
 ## Contributing
 
