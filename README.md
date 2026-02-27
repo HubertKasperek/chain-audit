@@ -114,6 +114,9 @@ chain-audit --verify-integrity --fail-on high
 # Deep scan with no file limit
 chain-audit --scan-code --max-files 0 --detailed
 
+# Parallel deep scan (auto worker count)
+chain-audit --scan-code --jobs 0
+
 # Custom scan limits
 chain-audit --max-file-size 2097152 --max-depth 15
 
@@ -146,6 +149,7 @@ chain-audit --check-typosquatting
 | `--max-file-size <bytes>` | Max file size to scan (default: 1048576 = 1MB) |
 | `--max-depth <n>` | Max nested node_modules depth (default: 10) |
 | `--max-files <n>` | Max JS files to scan per package (0 = unlimited, default: 0) |
+| `--jobs <n>` | Number of worker threads for `--scan-code` analysis (0 = auto) |
 | `--verify-integrity` | Additional checks for package structure tampering |
 | `--check-typosquatting` | Enable typosquatting detection (disabled by default) |
 | `--check-lockfile` | Check lockfile integrity (disabled by default due to possible false positives) |
@@ -183,7 +187,7 @@ Issues will be displayed sorted by severity (highest first), then by package nam
 ## Example Output
 
 ```
-chain-audit v0.7.0
+chain-audit v0.7.5
 Zero-dependency heuristic scanner CLI to detect supply chain attacks in node_modules
 ────────────────────────────────────────────────────────────
 
@@ -191,6 +195,7 @@ node_modules: /path/to/project/node_modules
 lockfile: /path/to/project/package-lock.json
 lockfile type: npm-v2
 packages scanned: 847
+analysis workers: 4
 
 Found 3 potential issue(s):
 
@@ -265,7 +270,6 @@ Trust Assessment:
   ✓ Has homepage
   ✓ Has author
   ✓ Has license
-  ✗ Not from trusted scope
   ✗ No repository
 ```
 
@@ -309,11 +313,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
   "ignoredRules": [
     "native_binary"
   ],
-  "trustedPackages": [
-    // Empty by default - all packages are checked without exceptions
-    // Add packages here only if you need to reduce false positives for specific packages
-    // Example: "esbuild", "@swc/*", "sharp"
-  ],
+  "trustedPackages": [],
   "trustedPatterns": {
     "node-gyp rebuild": true,
     "prebuild-install": true,
@@ -329,9 +329,12 @@ Alternatively, you can manually create a config file in your project root. Suppo
   "maxFileSizeForCodeScan": 1048576,
   "maxNestedDepth": 10,
   "maxFilesPerPackage": 0,
+  "analysisJobs": 0,
   "verifyIntegrity": false
 }
 ```
+
+`trustedPackages` is optional and empty by default. Add entries only when you intentionally want lower install-script severity for specific packages.
 
 ### Configuration Options
 
@@ -351,6 +354,7 @@ Alternatively, you can manually create a config file in your project root. Suppo
 | `maxFileSizeForCodeScan` | `number` | `1048576` | Max file size (bytes) to scan for code patterns |
 | `maxNestedDepth` | `number` | `10` | Max depth to traverse nested node_modules |
 | `maxFilesPerPackage` | `number` | `0` | Max JS files to scan per package (0 = unlimited) |
+| `analysisJobs` | `number` | `0` | Worker threads for `scanCode` package analysis (0 = auto) |
 | `verifyIntegrity` | `boolean` | `false` | Enable additional package structure integrity checks |
 
 ## GitHub Actions Integration
@@ -540,15 +544,23 @@ chain-audit automatically detects and parses:
 ## Programmatic Usage
 
 ```javascript
-const { run } = require('chain-audit');
+const { run, runAsync } = require('chain-audit');
 
+// Synchronous API (single-threaded analysis path)
 const result = run(['node', 'script.js', '--json', '--fail-on', 'high']);
 
 console.log(result.exitCode);  // 0 or 1
 console.log(result.issues);    // Array of all issues found (not filtered by --severity)
 console.log(result.summary);   // { counts: {...}, maxSeverity: 'high' } (calculated from filtered issues if --severity is used)
+console.log(result.analysisJobs); // Number of workers used for analysis (1 for run())
 
 // Note: run() also outputs to console.log() by default. Use --json format to get structured output.
+
+// Asynchronous API (used by CLI, supports worker-thread scan with --jobs)
+runAsync(['node', 'script.js', '--scan-code', '--jobs', '0', '--json'])
+  .then((asyncResult) => {
+    console.log(asyncResult.analysisJobs);
+  });
 ```
 
 ## Best Practices

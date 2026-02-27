@@ -23,6 +23,7 @@ describe('formatText', () => {
     
     assert.ok(output.includes('No issues detected'));
     assert.ok(output.includes('chain-audit'));
+    assert.ok(output.includes('analysis workers:'));
   });
 
   it('should format issues with severity', () => {
@@ -34,7 +35,7 @@ describe('formatText', () => {
         recommendation: 'Review script',
         package: 'test-pkg',
         version: '1.0.0',
-        path: 'test-pkg',
+        path: 'framework-a/node_modules/test-pkg',
       },
     ];
     const summary = { counts: { info: 0, low: 0, medium: 0, high: 1, critical: 0 }, maxSeverity: 'high' };
@@ -43,6 +44,7 @@ describe('formatText', () => {
       lockfile: null,
       lockfileType: null,
       packageCount: 1,
+      analysisJobs: 3,
       failLevel: null,
       severityFilter: null,
       version: '1.0.0',
@@ -52,6 +54,8 @@ describe('formatText', () => {
     const output = formatText(issues, summary, context);
     
     assert.ok(output.includes('test-pkg'));
+    assert.ok(output.includes('dependency tree:'));
+    assert.ok(output.includes('framework-a > test-pkg'));
     assert.ok(output.includes('install_script'));
     assert.ok(output.includes('HIGH'));
   });
@@ -102,6 +106,7 @@ describe('formatText', () => {
       lockfile: null,
       lockfileType: null,
       packageCount: 1,
+      analysisJobs: 3,
       failLevel: null,
       severityFilter: null,
       version: '1.0.0',
@@ -136,6 +141,7 @@ describe('formatJson', () => {
       lockfile: null,
       lockfileType: null,
       packageCount: 1,
+      analysisJobs: 3,
       failLevel: null,
       severityFilter: null,
       version: '1.0.0',
@@ -149,6 +155,7 @@ describe('formatJson', () => {
     assert.strictEqual(parsed.issues[0].package, 'test-pkg');
     assert.strictEqual(parsed.summary.total, 1);
     assert.strictEqual(parsed.summary.maxSeverity, 'high');
+    assert.strictEqual(parsed.context.analysisJobs, 3);
     assert.ok(parsed.timestamp);
   });
 

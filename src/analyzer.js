@@ -481,17 +481,44 @@ function normalizePackageRelativePath(relativePath) {
   return String(relativePath).replace(/\\/g, '/');
 }
 
+function matchesAnyCompiledGlob(compiledMatchers, value) {
+  if (!Array.isArray(compiledMatchers) || typeof value !== 'string') {
+    return false;
+  }
+
+  for (const matcher of compiledMatchers) {
+    if (matcher.exact !== null) {
+      if (matcher.exact === value) {
+        return true;
+      }
+      continue;
+    }
+
+    if (matcher.regex && matcher.regex.test(value)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Analyze package scripts for suspicious patterns
  */
 function analyzeScripts(pkg, config, issues, verbose = false) {
   const trustedPatterns = config.trustedPatterns || {};
   const trustedPackages = config.trustedPackages || [];
+  const trustedPatternKeys = Array.isArray(config._trustedPatternKeys)
+    ? config._trustedPatternKeys
+    : Object.keys(trustedPatterns);
+  const trustedPackageMatchers = Array.isArray(config._trustedPackageMatchers)
+    ? config._trustedPackageMatchers
+    : null;
 
   // Check if package is trusted (from config or known legitimate packages)
-  const isTrustedFromConfig = trustedPackages.some(pattern => {
-    return matchesGlobPattern(pattern, pkg.name);
-  });
+  const isTrustedFromConfig = trustedPackageMatchers
+    ? matchesAnyCompiledGlob(trustedPackageMatchers, pkg.name)
+    : trustedPackages.some(pattern => matchesGlobPattern(pattern, pkg.name));
   const isTrusted = isTrustedFromConfig || KNOWN_LEGITIMATE_PACKAGES.has(pkg.name);
 
   for (const [scriptName, scriptValue] of Object.entries(pkg.scripts)) {
@@ -501,7 +528,7 @@ function analyzeScripts(pkg, config, issues, verbose = false) {
     const isInstallLifecycle = INSTALL_SCRIPT_NAMES.has(scriptName);
 
     // Check for trusted patterns that reduce severity
-    const hasTrustedPattern = Object.keys(trustedPatterns).some(
+    const hasTrustedPattern = trustedPatternKeys.some(
       pattern => script.includes(pattern)
     );
     
@@ -1532,89 +1559,161 @@ function checkMetadataAnomalies(pkg, issues, verbose = false) {
   }
 }
 
+const LEXICAL_STATE = {
+  CODE: 0,
+  LINE_COMMENT: 1,
+  BLOCK_COMMENT: 2,
+  STRING: 3,
+};
+
+let lexicalTrackerCache = {
+  content: null,
+  tracker: null,
+};
+
+function createLexicalContextTracker(content) {
+  const length = content.length;
+  const stateByIndex = new Uint8Array(length);
+  const stringStartByIndex = new Int32Array(length);
+  const stringCharByIndex = new Uint16Array(length);
+  stringStartByIndex.fill(-1);
+
+  let scanned = 0;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let inString = false;
+  let stringChar = '';
+  let stringStart = -1;
+  let escaped = false;
+
+  function scanUntil(targetExclusive) {
+    while (scanned < targetExclusive && scanned < length) {
+      const index = scanned;
+      const char = content[index];
+      const nextChar = content[index + 1];
+
+      if (inLineComment) {
+        stateByIndex[index] = LEXICAL_STATE.LINE_COMMENT;
+        if (char === '\n') {
+          inLineComment = false;
+        }
+        scanned += 1;
+        continue;
+      }
+
+      if (inBlockComment) {
+        stateByIndex[index] = LEXICAL_STATE.BLOCK_COMMENT;
+        if (char === '*' && nextChar === '/' && index + 1 < length) {
+          stateByIndex[index + 1] = LEXICAL_STATE.BLOCK_COMMENT;
+          scanned += 2;
+          inBlockComment = false;
+          continue;
+        }
+        scanned += 1;
+        continue;
+      }
+
+      if (inString) {
+        stateByIndex[index] = LEXICAL_STATE.STRING;
+        stringStartByIndex[index] = stringStart;
+        stringCharByIndex[index] = stringChar.charCodeAt(0);
+
+        if (escaped) {
+          escaped = false;
+          scanned += 1;
+          continue;
+        }
+        if (char === '\\') {
+          escaped = true;
+          scanned += 1;
+          continue;
+        }
+        if (char === stringChar) {
+          inString = false;
+          stringChar = '';
+          stringStart = -1;
+        }
+        scanned += 1;
+        continue;
+      }
+
+      stateByIndex[index] = LEXICAL_STATE.CODE;
+
+      if (char === '/' && nextChar === '/') {
+        inLineComment = true;
+        scanned += 1;
+        continue;
+      }
+
+      if (char === '/' && nextChar === '*') {
+        inBlockComment = true;
+        scanned += 1;
+        continue;
+      }
+
+      if (char === '"' || char === '\'' || char === '`') {
+        inString = true;
+        stringChar = char;
+        stringStart = index;
+      }
+
+      scanned += 1;
+    }
+  }
+
+  function getContextBeforeIndex(targetIndex) {
+    if (targetIndex <= 0 || length === 0) {
+      return {
+        inLineComment: false,
+        inBlockComment: false,
+        inString: false,
+        stringChar: null,
+        stringStart: -1,
+      };
+    }
+
+    const index = Math.min(targetIndex, length - 1);
+    scanUntil(index + 1);
+    const lexicalState = stateByIndex[index];
+    const inStringContext = lexicalState === LEXICAL_STATE.STRING;
+
+    return {
+      inLineComment: lexicalState === LEXICAL_STATE.LINE_COMMENT,
+      inBlockComment: lexicalState === LEXICAL_STATE.BLOCK_COMMENT,
+      inString: inStringContext,
+      stringChar: inStringContext ? String.fromCharCode(stringCharByIndex[index]) : null,
+      stringStart: inStringContext ? stringStartByIndex[index] : -1,
+    };
+  }
+
+  return { getContextBeforeIndex };
+}
+
+function getCachedLexicalContextTracker(content) {
+  if (lexicalTrackerCache.content === content && lexicalTrackerCache.tracker) {
+    return lexicalTrackerCache.tracker;
+  }
+
+  const tracker = createLexicalContextTracker(content);
+  lexicalTrackerCache = { content, tracker };
+  return tracker;
+}
+
 /**
  * Get lexical context right before a character index.
  * Tracks whether parser is currently in comment or string.
  */
-function getLexicalContextBeforeIndex(content, targetIndex) {
-  let inLineComment = false;
-  let inBlockComment = false;
-  let inString = false;
-  let stringChar = null;
-  let stringStart = -1;
-  let escaped = false;
-
-  for (let i = 0; i < targetIndex; i++) {
-    const char = content[i];
-    const nextChar = content[i + 1];
-
-    if (inLineComment) {
-      if (char === '\n') {
-        inLineComment = false;
-      }
-      continue;
-    }
-
-    if (inBlockComment) {
-      if (char === '*' && nextChar === '/') {
-        inBlockComment = false;
-        i++;
-      }
-      continue;
-    }
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (char === stringChar) {
-        inString = false;
-        stringChar = null;
-        stringStart = -1;
-      }
-      continue;
-    }
-
-    if (char === '/' && nextChar === '/') {
-      inLineComment = true;
-      i++;
-      continue;
-    }
-
-    if (char === '/' && nextChar === '*') {
-      inBlockComment = true;
-      i++;
-      continue;
-    }
-
-    if (char === '"' || char === '\'' || char === '`') {
-      inString = true;
-      stringChar = char;
-      stringStart = i;
-    }
-  }
-
-  return {
-    inLineComment,
-    inBlockComment,
-    inString,
-    stringChar,
-    stringStart,
-  };
+function getLexicalContextBeforeIndex(content, targetIndex, tracker = null) {
+  const lexicalTracker = tracker || getCachedLexicalContextTracker(content);
+  return lexicalTracker.getContextBeforeIndex(targetIndex);
 }
 
 /**
  * Check if a match is in a comment, string literal, or regex pattern definition
  * This helps reduce false positives when scanning code that defines detection patterns
  */
-function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
-  const contentBeforeMatch = content.slice(0, matchIndex);
-  const lexicalContext = getLexicalContextBeforeIndex(content, matchIndex);
+function isMatchInNonExecutableContext(content, matchIndex, matchLength, tracker = null) {
+  const lexicalContext = getLexicalContextBeforeIndex(content, matchIndex, tracker);
 
   if (lexicalContext.inBlockComment || lexicalContext.inLineComment) {
     return true;
@@ -1666,6 +1765,8 @@ function isMatchInNonExecutableContext(content, matchIndex, matchLength) {
     // This covers cases where string continues or ends - if it's not dangerous, ignore
     return true; // Match is inside string (and not passed to dangerous function)
   }
+
+  const contentBeforeMatch = content.slice(0, matchIndex);
   
   // Check if it's in a regex pattern definition (e.g., /pattern/ or new RegExp(...))
   // Look backwards from match to find regex literal start
@@ -1852,7 +1953,7 @@ function hasCrossSignalProximity(indicesA, indicesB, maxDistance = 320) {
 /**
  * Lightweight parser signals for higher-precision matching without external deps.
  */
-function collectLightweightCodeSignals(content) {
+function collectLightweightCodeSignals(content, lexicalTracker = null) {
   const signals = {
     evalCallIndices: new Set(),
     functionCtorCallIndices: new Set(),
@@ -1884,11 +1985,14 @@ function collectLightweightCodeSignals(content) {
     signals.nodeNetworkCallIndices.add(index);
     signals.nodeNetworkKinds.set(index, kind);
   };
+  const isInNonExecutableContext = (index, length) => {
+    return isMatchInNonExecutableContext(content, index, length, lexicalTracker);
+  };
 
   // ---------------- Eval-like call sites ----------------
   forEachRegexMatch(content, /\beval\s*\(/g, (match) => {
     const index = match.index;
-    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    if (isInNonExecutableContext(index, match[0].length)) return;
 
     const prevNonWs = findPreviousNonWhitespaceIndex(content, index - 1);
     if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
@@ -1899,13 +2003,13 @@ function collectLightweightCodeSignals(content) {
 
   forEachRegexMatch(content, /\bnew\s+Function\s*\(/g, (match) => {
     const index = match.index;
-    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    if (isInNonExecutableContext(index, match[0].length)) return;
     signals.functionCtorCallIndices.add(index);
   });
 
   forEachRegexMatch(content, /\bFunction\s*\(/g, (match) => {
     const index = match.index;
-    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    if (isInNonExecutableContext(index, match[0].length)) return;
 
     const prevNonWs = findPreviousNonWhitespaceIndex(content, index - 1);
     if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
@@ -1918,50 +2022,50 @@ function collectLightweightCodeSignals(content) {
 
   forEachRegexMatch(content, /\b(?:setTimeout|setInterval)\s*\(\s*['"`]/g, (match) => {
     const index = match.index;
-    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    if (isInNonExecutableContext(index, match[0].length)) return;
     signals.timerStringCallIndices.add(index);
   });
 
   forEachRegexMatch(content, /\bvm\.(?:runInContext|runInNewContext|runInThisContext|compileFunction)\s*\(/g, (match) => {
     const index = match.index;
-    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    if (isInNonExecutableContext(index, match[0].length)) return;
     signals.vmCallIndices.add(index);
   });
 
   // ---------------- env + network call sites ----------------
   forEachRegexMatch(content, /\bprocess\.env(?:\s*\[\s*['"`][^'"`]+['"`]\s*\]|\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*)?/g, (match) => {
     const index = match.index;
-    if (isMatchInNonExecutableContext(content, index, match[0].length)) return;
+    if (isInNonExecutableContext(index, match[0].length)) return;
     signals.envAccessIndices.add(index);
   });
 
   forEachRegexMatch(content, /\bfetch\s*\(/g, (match) => {
-    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    if (isInNonExecutableContext(match.index, match[0].length)) return;
     addNetworkCall(match.index, 'fetch');
   });
 
   forEachRegexMatch(content, /\b(?:axios|got|superagent|request|ky)\s*(?:\.\s*(?:get|post|put|patch|delete|request))?\s*\(/g, (match) => {
-    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    if (isInNonExecutableContext(match.index, match[0].length)) return;
     addNetworkCall(match.index, 'http-client');
   });
 
   forEachRegexMatch(content, /\bhttps?\.(?:request|get)\s*\(/g, (match) => {
-    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    if (isInNonExecutableContext(match.index, match[0].length)) return;
     addNetworkCall(match.index, 'http-module');
   });
 
   forEachRegexMatch(content, /\brequire\s*\(\s*['"`](?:node:)?https?['"`]\s*\)\s*\.\s*(?:request|get)\s*\(/g, (match) => {
-    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    if (isInNonExecutableContext(match.index, match[0].length)) return;
     addNetworkCall(match.index, 'http-module');
   });
 
   forEachRegexMatch(content, /\b(?:dns\.resolve|dns\.lookup)\s*\(/g, (match) => {
-    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    if (isInNonExecutableContext(match.index, match[0].length)) return;
     addNetworkCall(match.index, 'dns');
   });
 
   forEachRegexMatch(content, /\bnew\s+WebSocket\s*\(/g, (match) => {
-    if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+    if (isInNonExecutableContext(match.index, match[0].length)) return;
     addNetworkCall(match.index, 'websocket');
   });
 
@@ -1970,7 +2074,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*require\\s*\\(\\s*${networkImportPrefix}\\s*\\)`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const alias = match[1];
       const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
       const aliasSet = networkModuleAliases[moduleName];
@@ -1984,7 +2088,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\bimport\\s+\\*\\s+as\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+from\\s*${networkImportPrefix}`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const alias = match[1];
       const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
       const aliasSet = networkModuleAliases[moduleName];
@@ -1998,7 +2102,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\bimport\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?:,\\s*\\{[^}]+\\})?\\s+from\\s*${networkImportPrefix}`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const alias = match[1];
       const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
       const aliasSet = networkModuleAliases[moduleName];
@@ -2012,7 +2116,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\b(?:const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*require\\s*\\(\\s*${networkImportPrefix}\\s*\\)`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
       const bindings = parseDestructuredBindings(match[1], false);
       for (const { imported, local } of bindings) {
@@ -2027,7 +2131,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\bimport\\s*\\{([^}]+)\\}\\s*from\\s*${networkImportPrefix}`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const moduleName = match[2] === 'http' ? 'http' : match[2] === 'https' ? 'https' : match[2];
       const bindings = parseDestructuredBindings(match[1], true);
       for (const { imported, local } of bindings) {
@@ -2042,7 +2146,7 @@ function collectLightweightCodeSignals(content) {
     for (const alias of networkModuleAliases[moduleName]) {
       const memberCallRegex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*(request|get)\\s*\\(`, 'g');
       forEachRegexMatch(content, memberCallRegex, (match) => {
-        if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+        if (isInNonExecutableContext(match.index, match[0].length)) return;
         addNetworkCall(match.index, 'http-module');
       });
     }
@@ -2051,7 +2155,7 @@ function collectLightweightCodeSignals(content) {
   for (const alias of networkModuleAliases.dns) {
     const memberCallRegex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*(resolve|lookup)\\s*\\(`, 'g');
     forEachRegexMatch(content, memberCallRegex, (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       addNetworkCall(match.index, 'dns');
     });
   }
@@ -2059,7 +2163,7 @@ function collectLightweightCodeSignals(content) {
   for (const alias of networkModuleAliases.ws) {
     const wsCallRegex = new RegExp(`\\b(?:new\\s+)?${escapeRegExp(alias)}\\s*\\(`, 'g');
     forEachRegexMatch(content, wsCallRegex, (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       addNetworkCall(match.index, 'websocket');
     });
   }
@@ -2067,7 +2171,7 @@ function collectLightweightCodeSignals(content) {
   for (const [localFnName, methodKind] of networkFunctionAliases.entries()) {
     const directCallRegex = new RegExp(`\\b${escapeRegExp(localFnName)}\\s*\\(`, 'g');
     forEachRegexMatch(content, directCallRegex, (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const prevNonWs = findPreviousNonWhitespaceIndex(content, match.index - 1);
       if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
       if (declarationLikeKeywords.has(getPreviousWord(content, match.index))) return;
@@ -2084,7 +2188,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\b(?:const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*require\\s*\\(\\s*${childProcessImportPrefix}\\s*\\)`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const bindings = parseDestructuredBindings(match[1], false);
       for (const { imported, local } of bindings) {
         if (CHILD_PROCESS_METHOD_NAMES.has(imported)) {
@@ -2098,7 +2202,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\b(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*require\\s*\\(\\s*${childProcessImportPrefix}\\s*\\)`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       childProcessAliases.add(match[1]);
     }
   );
@@ -2107,7 +2211,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\bimport\\s+\\*\\s+as\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+from\\s*${childProcessImportPrefix}`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       childProcessAliases.add(match[1]);
     }
   );
@@ -2116,7 +2220,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\bimport\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*(?:,\\s*\\{[^}]+\\})?\\s+from\\s*${childProcessImportPrefix}`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       childProcessAliases.add(match[1]);
     }
   );
@@ -2125,7 +2229,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\bimport\\s*\\{([^}]+)\\}\\s*from\\s*${childProcessImportPrefix}`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const bindings = parseDestructuredBindings(match[1], true);
       for (const { imported, local } of bindings) {
         if (CHILD_PROCESS_METHOD_NAMES.has(imported)) {
@@ -2139,7 +2243,7 @@ function collectLightweightCodeSignals(content) {
     content,
     new RegExp(`\\brequire\\s*\\(\\s*${childProcessImportPrefix}\\s*\\)\\s*\\.\\s*${childMethodAlternation}\\s*\\(`, 'g'),
     (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const method = match[1];
       const methodIndex = match.index + match[0].lastIndexOf(method);
       signals.childProcessCallIndices.add(methodIndex);
@@ -2150,7 +2254,7 @@ function collectLightweightCodeSignals(content) {
   for (const alias of childProcessAliases) {
     const memberCallRegex = new RegExp(`\\b${escapeRegExp(alias)}\\s*\\.\\s*${childMethodAlternation}\\s*\\(`, 'g');
     forEachRegexMatch(content, memberCallRegex, (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
       const method = match[1];
       const methodIndex = match.index + match[0].lastIndexOf(method);
       signals.childProcessCallIndices.add(methodIndex);
@@ -2161,7 +2265,7 @@ function collectLightweightCodeSignals(content) {
   for (const [localFnName, importedMethod] of childProcessFunctionAliases.entries()) {
     const directCallRegex = new RegExp(`\\b${escapeRegExp(localFnName)}\\s*\\(`, 'g');
     forEachRegexMatch(content, directCallRegex, (match) => {
-      if (isMatchInNonExecutableContext(content, match.index, match[0].length)) return;
+      if (isInNonExecutableContext(match.index, match[0].length)) return;
 
       const prevNonWs = findPreviousNonWhitespaceIndex(content, match.index - 1);
       if (prevNonWs !== -1 && content[prevNonWs] === '.') return;
@@ -2313,48 +2417,48 @@ function collectEnvVariableNames(content) {
   return Array.from(envNames);
 }
 
+const SAFE_ENV_EXACT = new Set([
+  'NODE_ENV',
+  'NODE_DEBUG',
+  'DEBUG',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'CI',
+  'TZ',
+  'LANG',
+  'HOME',
+  'USER',
+  'PATH',
+  'SHELL',
+  'PWD',
+]);
+
+const SAFE_ENV_PREFIXES = [
+  'NODE_',
+  'NPM_CONFIG_',
+  'NPM_PACKAGE_',
+  'NPM_LIFECYCLE_',
+  'YARN_',
+  'PNPM_',
+  'BUN_',
+  'ESBUILD_',
+  'NAPI_RS_',
+  'PARCEL_',
+  'VITE_',
+  'NEXT_',
+  'NUXT_',
+  'SVELTEKIT_',
+];
+
 function isLikelySensitiveEnvVar(varName) {
   if (!varName) return false;
   const normalized = varName.toUpperCase();
 
-  const safeExact = new Set([
-    'NODE_ENV',
-    'NODE_DEBUG',
-    'DEBUG',
-    'NO_COLOR',
-    'FORCE_COLOR',
-    'CI',
-    'TZ',
-    'LANG',
-    'HOME',
-    'USER',
-    'PATH',
-    'SHELL',
-    'PWD',
-  ]);
-
-  if (safeExact.has(normalized)) {
+  if (SAFE_ENV_EXACT.has(normalized)) {
     return false;
   }
 
-  const safePrefixes = [
-    'NODE_',
-    'NPM_CONFIG_',
-    'NPM_PACKAGE_',
-    'NPM_LIFECYCLE_',
-    'YARN_',
-    'PNPM_',
-    'BUN_',
-    'ESBUILD_',
-    'NAPI_RS_',
-    'PARCEL_',
-    'VITE_',
-    'NEXT_',
-    'NUXT_',
-    'SVELTEKIT_',
-  ];
-
-  if (safePrefixes.some(prefix => normalized.startsWith(prefix))) {
+  if (SAFE_ENV_PREFIXES.some(prefix => normalized.startsWith(prefix))) {
     return false;
   }
 
@@ -2367,19 +2471,20 @@ function isLikelySensitiveEnvVar(varName) {
 function analyzeCode(pkg, config, issues, verbose = false) {
   const maxFileSize = config.maxFileSizeForCodeScan || 1024 * 1024;
   const maxFiles = config.maxFilesPerPackage || 0; // 0 = unlimited
-  const jsFiles = findJsFiles(pkg.dir, 10); // Scan up to 10 levels deep
+  const jsFiles = findJsFiles(pkg.dir, 10, maxFiles); // Scan up to 10 levels deep
 
-  // Apply file limit (0 means scan all files)
-  const filesToScan = maxFiles > 0 ? jsFiles.slice(0, maxFiles) : jsFiles;
-
-  for (const filePath of filesToScan) {
+  for (const filePath of jsFiles) {
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > maxFileSize) continue;
 
       const content = fs.readFileSync(filePath, 'utf8');
+      const lexicalTracker = createLexicalContextTracker(content);
+      const isInNonExecutableContext = (index, length) => {
+        return isMatchInNonExecutableContext(content, index, length, lexicalTracker);
+      };
       const relativePath = path.relative(pkg.dir, filePath);
-      const codeSignals = collectLightweightCodeSignals(content);
+      const codeSignals = collectLightweightCodeSignals(content, lexicalTracker);
 
       // Check for eval patterns - reduce false positives
       for (const pattern of EVAL_PATTERNS) {
@@ -2389,7 +2494,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           pattern.lastIndex = 0;
           
           // Skip if match is in comment, string, or regex definition
-          if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+          if (isInNonExecutableContext(patternMatch.index, patternMatch[0].length)) {
             continue;
           }
 
@@ -2488,21 +2593,10 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           }
           
           // Skip if it's a template engine or known legitimate use case
-          const isTemplateEngine = /(?:template|render|compile|parse|eval)/i.test(relativePath) ||
-                                  /(?:handlebars|mustache|ejs|pug|jade|nunjucks)/i.test(pkg?.name || '');
+          const isTemplateEngine = /(?:template|render|compile|parse|eval)/i.test(relativePath);
           
           // Skip if it's clearly a JSON parser or polyfill
-          const isJsonParser = /(?:json|parse|polyfill)/i.test(relativePath) ||
-                              /(?:json[_-]?parse|polyfill)/i.test(pkg?.name || '');
-          
-          // Skip ESLint and related packages (eval is normal for rule evaluation)
-          // IMPORTANT: Use exact matches or trusted scopes to avoid missing typosquatting attacks
-          const isEslintRelated = pkg && (
-            pkg.name === 'eslint' ||
-            pkg.name === 'eslint-scope' ||
-            pkg.name.startsWith('@eslint/') ||
-            pkg.name.startsWith('@humanwhocodes/')
-          );
+          const isJsonParser = /(?:json|parse|polyfill)/i.test(relativePath);
           
           // Check if package is from trusted scope or known legitimate
           const isTrustedPackage = pkg && (
@@ -2517,7 +2611,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           const isCompiledFile = /(?:^|\/)(?:dist|build|lib|compiled|cjs|esm|umd|chunk-)(?:\/|$)/i.test(relativePath) ||
                                  /\.(min|bundle|compiled|legacy)\.(js|mjs|cjs)$/i.test(relativePath);
           
-          if (isTestFile || isMinifiedOrBundled || isTemplateEngine || isJsonParser || isEslintRelated || isTrustedPackage || isCompiledFile) {
+          if (isTestFile || isMinifiedOrBundled || isTemplateEngine || isJsonParser || isTrustedPackage || isCompiledFile) {
             continue;
           }
           
@@ -2550,7 +2644,6 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               falsePositiveHints: [
                 isTestFile ? '✓ This appears to be a test file - eval usage for mocking is common' : null,
                 isMinifiedOrBundled ? '✓ This appears to be a minified/bundled file - eval patterns may be false positives' : null,
-                isEslintRelated ? '✓ ESLint packages use eval for rule evaluation - this is normal' : null,
                 isTrustedPackage ? '✓ This is a known legitimate package that uses eval' : null,
                 isTemplateEngine ? '✓ This appears to be a template engine - eval usage is expected' : null,
                 isJsonParser ? '✓ This appears to be a JSON parser - eval usage for fallback is common' : null,
@@ -2578,7 +2671,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             continue;
           }
 
-          const matchInNonExecutableContext = isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length);
+          const matchInNonExecutableContext = isInNonExecutableContext(patternMatch.index, patternMatch[0].length);
           const isChildProcessSpecifierPattern = pattern.source === 'child_process';
 
           // Allow child_process module specifier strings only when we already have AST-backed usage.
@@ -2710,7 +2803,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           pattern.lastIndex = 0;
           
           // Skip if match is in comment, string, or regex definition
-          if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+          if (isInNonExecutableContext(patternMatch.index, patternMatch[0].length)) {
             continue;
           }
           
@@ -2721,8 +2814,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           );
           
           // Check if it's a known diagnostic tool (is-docker, etc.)
-          const isDiagnosticTool = /(?:is-docker|is-wsl|is-windows|is-mac|is-linux|platform)/i.test(relativePath) ||
-                                  /(?:is-docker|is-wsl|is-windows|is-mac|is-linux|platform)/i.test(pkg?.name || '');
+          const isDiagnosticTool = /(?:is-docker|is-wsl|is-windows|is-mac|is-linux|platform)/i.test(relativePath);
           
           // Check if it's a compiled/bundled file
           const isCompiledFile = /(?:^|\/)(?:dist|build|lib|compiled|cjs|esm|umd)(?:\/|$)/i.test(relativePath) ||
@@ -2772,21 +2864,12 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       }
 
       // Check for Node.js network patterns (common in supply chain attacks)
-      // Skip if package is clearly an HTTP client library or network-related utility
-      const isHttpClient = pkg && /^(axios|got|node-fetch|undici|ky|superagent|request|needle|phin|bent|httpie|type-check|xmlhttprequest)/i.test(pkg.name);
-      
-      // Skip WebSocket-related packages (ws, uri-js for ws:// URLs, etc.)
-      const isWebSocketRelated = pkg && (
-        /^(ws|websocket|socket\.io|uri-js)/i.test(pkg.name) ||
-        /(?:websocket|ws|wss)/i.test(relativePath)
-      );
-      
       // Check if it's a browser-only package (fetch() is normal in browser packages)
-      const isBrowserPackage = pkg && (
-        /(?:^|\/)(?:browser|web|client|frontend)(?:\/|$)/i.test(pkg.name) ||
-        /(?:^|\/)(?:browser|web|client|frontend)(?:\/|$)/i.test(relativePath) ||
-        /\.browser\.(js|mjs|cjs)$/i.test(relativePath)
-      );
+      const isBrowserPackage = /(?:^|\/)(?:browser|web|client|frontend)(?:\/|$)/i.test(relativePath) ||
+                              /\.browser\.(js|mjs|cjs)$/i.test(relativePath);
+
+      // Network-focused packages are not auto-trusted, but findings can be lower severity.
+      const isNetworkFocusedPackage = /(?:^|\/)(?:http|https|fetch|request|client|socket|websocket|ws|dns)(?:[\/._-]|$)/i.test(relativePath);
       
       // Check if package is from trusted scope or known legitimate
       const isTrustedPackage = pkg && (
@@ -2798,7 +2881,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
       const isCompiledFile = /(?:^|\/)(?:dist|build|lib|compiled|cjs|esm|umd)(?:\/|$)/i.test(relativePath) ||
                              /\.(min|bundle|compiled)\.(js|mjs|cjs)$/i.test(relativePath);
       
-      if (!isHttpClient && !isWebSocketRelated && !isTrustedPackage && !isCompiledFile) {
+      if (!isTrustedPackage && !isCompiledFile) {
         for (const pattern of NODE_NETWORK_PATTERNS) {
           const patternMatch = pattern.exec(content);
           if (patternMatch) {
@@ -2806,7 +2889,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             pattern.lastIndex = 0;
             
             // Skip if match is in comment, string, or regex definition
-            if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+            if (isInNonExecutableContext(patternMatch.index, patternMatch[0].length)) {
               continue;
             }
 
@@ -2827,7 +2910,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             }
             
             const issue = {
-              severity: 'medium',
+              severity: isNetworkFocusedPackage ? 'low' : 'medium',
               reason: 'node_network_access',
               detail: `File "${relativePath}" uses Node.js network APIs (${pattern.source})`,
               recommendation: 'Network access in dependencies should be reviewed for legitimacy.',
@@ -2852,6 +2935,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
                 isMinified: snippet?.isMinified || false,
                 falsePositiveHints: [
                   isTestFile ? '✓ This appears to be a test file - network mocking is common' : null,
+                  isNetworkFocusedPackage ? '✓ Package appears network-focused; verify calls match expected functionality' : null,
                   'HTTP client libraries (axios, got, fetch) are common',
                   'Check what URLs/endpoints are being accessed',
                   'Verify network calls match package purpose',
@@ -2874,7 +2958,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
         if (match) {
           pattern.lastIndex = 0;
           // Skip if match is in comment, string, or regex definition
-          if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+          if (!isInNonExecutableContext(match.index, match[0].length)) {
             envMatch = pattern;
             envMatchIndex = match.index;
             envMatchText = match[0];
@@ -2890,23 +2974,8 @@ function analyzeCode(pkg, config, issues, verbose = false) {
 
         const hasAstEnvFlow = hasEnvToCapabilityFlow(content, codeSignals);
 
-        // Skip known legitimate packages that use env vars (ESLint, config loaders, etc.)
-        // IMPORTANT: Use exact matches or trusted scopes to avoid missing typosquatting attacks
-        const isKnownLegitimateEnv = pkg && (
-          // Only official ESLint packages (exact match or trusted scopes)
-          pkg.name === 'eslint' ||
-          pkg.name.startsWith('@eslint/') ||
-          pkg.name.startsWith('@humanwhocodes/') ||
-          // Config/environment utilities (exact matches only)
-          pkg.name === 'fs.realpath' || // Old package, likely false positive
-          pkg.name === 'dotenv' ||
-          pkg.name === 'cross-env' ||
-          pkg.name === '@types/node' // Type definitions
-        );
-        
         // Check if package is from trusted scope or known legitimate
         const isTrustedPackage = pkg && (
-          isKnownLegitimateEnv ||
           KNOWN_LEGITIMATE_PACKAGES.has(pkg.name) ||
           (pkg.name.startsWith('@') && TRUSTED_SCOPES.has(pkg.name.split('/')[0]))
         );
@@ -2928,7 +2997,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           const match = pattern.exec(content);
           if (match) {
             pattern.lastIndex = 0;
-            if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+            if (!isInNonExecutableContext(match.index, match[0].length)) {
               networkMatch = pattern;
               break;
             }
@@ -2940,7 +3009,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
           const match = pattern.exec(content);
           if (match) {
             pattern.lastIndex = 0;
-            if (!isMatchInNonExecutableContext(content, match.index, match[0].length)) {
+            if (!isInNonExecutableContext(match.index, match[0].length)) {
               if (!isNodeNetworkPatternBackedBySignals(pattern, match.index, codeSignals)) {
                 continue;
               }
@@ -2961,7 +3030,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
               continue;
             }
 
-            const matchInNonExecutableContext = isMatchInNonExecutableContext(content, match.index, match[0].length);
+            const matchInNonExecutableContext = isInNonExecutableContext(match.index, match[0].length);
             const isChildProcessSpecifierPattern = pattern.source === 'child_process';
             if (matchInNonExecutableContext && !isChildProcessSpecifierPattern) {
               continue;
@@ -3043,7 +3112,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             }
             
             // If network match is also in a non-executable context, skip
-            if (networkMatchIdx !== -1 && isMatchInNonExecutableContext(content, networkMatchIdx, 10)) {
+            if (networkMatchIdx !== -1 && isInNonExecutableContext(networkMatchIdx, 10)) {
               continue; // Both are in comments/strings - skip
             }
             
@@ -3205,7 +3274,7 @@ function analyzeCode(pkg, config, issues, verbose = false) {
             
             // Skip if match is in comment, string, or regex definition
             // (though obfuscation patterns are less likely to be false positives from this)
-            if (isMatchInNonExecutableContext(content, patternMatch.index, patternMatch[0].length)) {
+            if (isInNonExecutableContext(patternMatch.index, patternMatch[0].length)) {
               continue;
             }
             // Distinguish minified from obfuscated:
@@ -3323,11 +3392,15 @@ function getObfuscationType(pattern) {
 /**
  * Find JavaScript files in package
  */
-function findJsFiles(dir, maxDepth = 2) {
+function findJsFiles(dir, maxDepth = 2, maxFiles = 0) {
   const files = [];
   const stack = [{ dir, depth: 0 }];
 
   while (stack.length > 0) {
+    if (maxFiles > 0 && files.length >= maxFiles) {
+      break;
+    }
+
     const { dir: currentDir, depth } = stack.pop();
     if (depth > maxDepth) continue;
 
@@ -3340,6 +3413,10 @@ function findJsFiles(dir, maxDepth = 2) {
     }
 
     for (const entry of entries) {
+      if (maxFiles > 0 && files.length >= maxFiles) {
+        break;
+      }
+
       if (entry.name.startsWith('.')) continue;
       if (entry.name === 'node_modules') continue;
 

@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { run, summarize } = require('../src/index');
+const { run, runAsync, summarize } = require('../src/index');
 
 describe('summarize', () => {
   it('should count issues by severity', () => {
@@ -49,9 +49,64 @@ describe('summarize', () => {
 
 describe('run', () => {
   it('should show help when --help is provided', () => {
-    const result = run(['node', 'script', '--help']);
-    
-    assert.strictEqual(result.exitCode, 0);
+    let output = '';
+    const originalLog = console.log;
+    console.log = (message = '') => {
+      output += `${String(message)}\n`;
+    };
+
+    try {
+      const result = run(['node', 'script', '--help']);
+      assert.strictEqual(result.exitCode, 0);
+    } finally {
+      console.log = originalLog;
+    }
+
+    assert.ok(output.includes('RULE IDS FOR --ignore-rules'));
+    assert.ok(output.includes('native_binary'));
+    assert.ok(output.includes('env_with_network'));
+  });
+
+  it('should support async scan execution with worker jobs', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const nodeModules = path.join(tempDir, 'node_modules');
+    fs.mkdirSync(nodeModules, { recursive: true });
+
+    const packages = [
+      { name: 'test-pkg-a', code: 'eval("1+1");' },
+      { name: 'test-pkg-b', code: 'const x = 1 + 1;' },
+    ];
+
+    for (const pkg of packages) {
+      const pkgDir = path.join(nodeModules, pkg.name);
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkgDir, 'package.json'),
+        JSON.stringify({
+          name: pkg.name,
+          version: '1.0.0',
+          scripts: {},
+        })
+      );
+      fs.writeFileSync(path.join(pkgDir, 'index.js'), pkg.code);
+    }
+
+    try {
+      const result = await runAsync([
+        'node',
+        'script',
+        '--node-modules', nodeModules,
+        '--scan-code',
+        '--jobs', '2',
+        '--json',
+      ]);
+
+      const evalIssue = (result.issues || []).find(i => i.reason === 'eval_usage');
+      assert.ok(evalIssue, 'Async run should detect eval usage with worker analysis');
+      assert.strictEqual(result.analysisJobs, 2);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
   });
 
   it('should show version when --version is provided', () => {
