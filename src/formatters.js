@@ -57,6 +57,7 @@ function formatText(issues, summary, context) {
     lines.push(`${color('lockfile type:', colors.dim)} ${context.lockfileType}`);
   }
   lines.push(`${color('packages scanned:', colors.dim)} ${context.packageCount}`);
+  lines.push(`${color('analysis workers:', colors.dim)} ${context.analysisJobs || 1}`);
   if (context.severityFilter) {
     lines.push(`${color('severity filter:', colors.dim)} ${context.severityFilter.join(', ')}`);
   }
@@ -90,6 +91,10 @@ function formatText(issues, summary, context) {
 
       const pkgInfo = `${issue.package}@${issue.version}`;
       lines.push(`  ${color('●', getSeverityColor(issue.severity))} ${color(pkgInfo, colors.bold)}`);
+      const dependencyTreePath = formatDependencyTreePath(issue.path);
+      if (dependencyTreePath) {
+        lines.push(`    ${color('dependency tree:', colors.dim)} ${dependencyTreePath}`);
+      }
       lines.push(`    ${color('reason:', colors.dim)} ${issue.reason}`);
       lines.push(`    ${color('detail:', colors.dim)} ${issue.detail}`);
       if (issue.recommendation) {
@@ -329,6 +334,25 @@ function getSeverityColor(severity) {
 }
 
 /**
+ * Convert internal node_modules-relative path to human-readable dependency tree.
+ * Example: "@scope/a/node_modules/b" -> "@scope/a > b"
+ */
+function formatDependencyTreePath(pathValue) {
+  if (typeof pathValue !== 'string' || pathValue.length === 0) {
+    return null;
+  }
+
+  const normalized = pathValue.replace(/\\/g, '/');
+  const segments = normalized.split('/node_modules/').filter(Boolean);
+
+  if (segments.length === 0) {
+    return normalized;
+  }
+
+  return segments.join(' > ');
+}
+
+/**
  * Format a value for display, truncating long strings
  */
 function formatValue(value) {
@@ -393,6 +417,7 @@ function formatJson(issues, summary, context) {
       lockfile: context.lockfile,
       lockfileType: context.lockfileType || null,
       packageCount: context.packageCount,
+      analysisJobs: context.analysisJobs || 1,
       severityFilter: context.severityFilter || null,
       failLevel: context.failLevel,
       verbose: context.verbose || false,

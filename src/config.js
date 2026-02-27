@@ -36,6 +36,8 @@ const DEFAULT_CONFIG = {
   maxNestedDepth: 10,
   // Maximum number of JS files to scan per package (0 = unlimited)
   maxFilesPerPackage: 0,
+  // Number of worker threads for package analysis when scanCode is enabled (0 = auto)
+  analysisJobs: 0,
   // Verify integrity hashes from lockfile
   verifyIntegrity: false,
 };
@@ -143,6 +145,11 @@ function validateConfig(config) {
       throw new Error('Config: maxFilesPerPackage must be a non-negative number (0 = unlimited)');
     }
   }
+  if (config.analysisJobs !== undefined) {
+    if (typeof config.analysisJobs !== 'number' || config.analysisJobs < 0 || !Number.isInteger(config.analysisJobs)) {
+      throw new Error('Config: analysisJobs must be a non-negative integer (0 = auto)');
+    }
+  }
   if (config.verifyIntegrity !== undefined && typeof config.verifyIntegrity !== 'boolean') {
     throw new Error('Config: verifyIntegrity must be a boolean');
   }
@@ -190,6 +197,9 @@ function mergeConfig(fileConfig, cliArgs) {
   }
   if (fileConfig.maxFilesPerPackage !== undefined) {
     config.maxFilesPerPackage = fileConfig.maxFilesPerPackage;
+  }
+  if (fileConfig.analysisJobs !== undefined) {
+    config.analysisJobs = fileConfig.analysisJobs;
   }
   if (fileConfig.verifyIntegrity !== undefined) {
     config.verifyIntegrity = fileConfig.verifyIntegrity;
@@ -253,6 +263,9 @@ function mergeConfig(fileConfig, cliArgs) {
   if (cliArgs.maxFiles !== undefined && cliArgs.maxFiles !== null) {
     config.maxFilesPerPackage = cliArgs.maxFiles;
   }
+  if (cliArgs.jobs !== undefined && cliArgs.jobs !== null) {
+    config.analysisJobs = cliArgs.jobs;
+  }
   if (cliArgs.verifyIntegrity) {
     config.verifyIntegrity = true;
   }
@@ -292,6 +305,7 @@ function generateExampleConfig() {
     maxFileSizeForCodeScan: 1048576,
     maxNestedDepth: 10,
     maxFilesPerPackage: 0,
+    analysisJobs: 0,
     verifyIntegrity: false
   };
 

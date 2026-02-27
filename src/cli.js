@@ -143,6 +143,7 @@ function getFlagRequirement(flag) {
     '--max-file-size': 'bytes',
     '--max-depth': 'depth number',
     '--max-files': 'file count',
+    '--jobs': 'worker count (0 = auto)',
     '--verify-integrity': null,
   };
   return requirements[flag] || null;
@@ -187,6 +188,7 @@ function getAllValidFlags() {
     '--max-file-size',
     '--max-depth',
     '--max-files',
+    '--jobs',
     '--verify-integrity',
   ];
 }
@@ -272,6 +274,7 @@ function parseArgs(argv) {
     maxFileSize: null,
     maxDepth: null,
     maxFiles: null,
+    jobs: null,
     verifyIntegrity: false,
   };
 
@@ -429,6 +432,13 @@ function parseArgs(argv) {
       case '--max-files': {
         const value = ensureOptionValue(arg, argv[i + 1]);
         args.maxFiles = parseNonNegativeInt(value, arg, true); // 0 = unlimited
+        i += 1;
+        break;
+      }
+
+      case '--jobs': {
+        const value = ensureOptionValue(arg, argv[i + 1]);
+        args.jobs = parseNonNegativeInt(value, arg, true); // 0 = auto
         i += 1;
         break;
       }

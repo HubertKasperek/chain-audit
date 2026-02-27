@@ -204,6 +204,21 @@ describe('validateConfig (via loadConfig)', () => {
       fs.rmSync(tempDir, { recursive: true });
     }
   });
+
+  it('should reject invalid analysisJobs', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chain-audit-test-'));
+    const configPath = path.join(tempDir, '.chainauditrc.json');
+
+    fs.writeFileSync(configPath, JSON.stringify({ analysisJobs: -1 }));
+
+    try {
+      assert.throws(() => {
+        loadConfig(configPath);
+      }, /analysisJobs must be a non-negative integer/);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
 });
 
 describe('loadConfig', () => {
@@ -309,6 +324,14 @@ describe('mergeConfig', () => {
     const config = mergeConfig(fileConfig, cliArgs);
     assert.strictEqual(config.format, 'sarif');
   });
+
+  it('should merge analysisJobs from file and override with CLI', () => {
+    const fileConfig = { analysisJobs: 2 };
+    const cliArgs = { jobs: 4 };
+
+    const config = mergeConfig(fileConfig, cliArgs);
+    assert.strictEqual(config.analysisJobs, 4);
+  });
 });
 
 describe('initConfig', () => {
@@ -325,6 +348,7 @@ describe('initConfig', () => {
       const config = JSON.parse(content);
       assert.ok(Array.isArray(config.ignoredPackages));
       assert.ok(typeof config.scanCode === 'boolean');
+      assert.strictEqual(typeof config.analysisJobs, 'number');
     } finally {
       fs.rmSync(tempDir, { recursive: true });
     }
@@ -375,6 +399,7 @@ describe('DEFAULT_CONFIG', () => {
     assert.strictEqual(typeof DEFAULT_CONFIG.checkLockfile, 'boolean');
     assert.ok(Array.isArray(DEFAULT_CONFIG.trustedPackages));
     assert.ok(typeof DEFAULT_CONFIG.trustedPatterns, 'object');
+    assert.strictEqual(typeof DEFAULT_CONFIG.analysisJobs, 'number');
   });
 });
 

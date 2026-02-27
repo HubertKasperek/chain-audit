@@ -209,6 +209,12 @@ describe('parseArgs', () => {
     assert.strictEqual(args.maxFiles, 100);
   });
 
+  it('should parse jobs', () => {
+    const args = parseArgs(['node', 'script', '--jobs', '0']);
+
+    assert.strictEqual(args.jobs, 0);
+  });
+
   it('should parse verify-integrity flag', () => {
     const args = parseArgs(['node', 'script', '--verify-integrity']);
     
